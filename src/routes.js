@@ -184,6 +184,62 @@ const initRoutes = (app) => {
             res.status(500).json({ error: err.message });
         }
     });
+
+    // Send Audio / Voice Note Message
+    app.post('/:instanceId/messages/audio', requireAuth, async (req, res) => {
+        const { to, audio, ptt } = req.body;
+        
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
+            let mediaTypeOptions = {};
+            if (audio.startsWith('http')) {
+                mediaTypeOptions = { url: audio };
+            } else {
+                mediaTypeOptions = Buffer.from(audio, 'base64');
+            }
+
+            const msg = await sock.sendMessage(jid, { 
+                audio: mediaTypeOptions, 
+                mimetype: 'audio/mp4',
+                ptt: ptt === true || ptt === 'true' // if true, it renders as a voice note
+            });
+            res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Send Presence (Typing, Recording, Online)
+    app.post('/:instanceId/presence', requireAuth, async (req, res) => {
+        const { to, status } = req.body;
+        // status options: 'available', 'unavailable', 'composing', 'recording', 'paused'
+        
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
+            await sock.sendPresenceUpdate(status || 'composing', jid);
+            res.json({ success: true, status: status || 'composing', jid });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
     
     // Get WhatsApp Profile Picture
     app.get('/:instanceId/contacts/profile-picture', requireAuth, async (req, res) => {
