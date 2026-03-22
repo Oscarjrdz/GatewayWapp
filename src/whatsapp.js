@@ -93,10 +93,16 @@ const createSession = async (id) => {
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
+        
+        const instances = getInstances();
+        let currentReceived = instances[id]?.messages_received || 0;
+
         for (const msg of messages) {
-            // Trigger webhook for new messages
+            currentReceived += 1;
             await sendWebhook(id, 'message_received', msg);
         }
+        
+        updateInstance(id, { messages_received: currentReceived });
     });
 
     sock.ev.on('messages.update', async (updates) => {

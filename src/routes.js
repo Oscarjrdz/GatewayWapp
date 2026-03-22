@@ -56,7 +56,11 @@ const initRoutes = (app) => {
         const list = Object.keys(instances).map(id => ({
             instance_id: `instance${id}`,
             token: instances[id].token,
-            status: getSessionState(id)
+            status: getSessionState(id),
+            webhook_url: instances[id].webhook_url || '',
+            webhook_message_received: instances[id].webhook_message_received || false,
+            messages_sent: instances[id].messages_sent || 0,
+            messages_received: instances[id].messages_received || 0
         }));
         res.json(list);
     });
@@ -64,7 +68,14 @@ const initRoutes = (app) => {
     // Get Status
     app.get('/:instanceId/status', requireAuth, async (req, res) => {
         const status = getSessionState(req.instanceId);
-        res.json({ instanceId: req.instanceId, status });
+        res.json({ 
+            instanceId: req.instanceId, 
+            status,
+            webhook_url: req.instance.webhook_url,
+            webhook_message_received: req.instance.webhook_message_received,
+            messages_sent: req.instance.messages_sent || 0,
+            messages_received: req.instance.messages_received || 0
+        });
     });
 
     // Get QR
@@ -101,6 +112,11 @@ const initRoutes = (app) => {
             }
 
             const msg = await sock.sendMessage(jid, { text: body || '' });
+            
+            // Increment Sent
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+            
             res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
         } catch (err) {
             res.status(500).json({ error: err.message });

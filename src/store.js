@@ -8,7 +8,9 @@ const defaultSettings = {
     webhook_message_received: false,
     webhook_message_create: false,
     webhook_message_ack: false,
-    webhook_message_download_media: false
+    webhook_message_download_media: false,
+    messages_sent: 0,
+    messages_received: 0
 };
 
 const getInstances = () => {
