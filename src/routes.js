@@ -50,6 +50,17 @@ const initRoutes = (app) => {
         res.json({ instance_id: `instance${id}`, token });
     });
 
+    // List all instances (Personal Dashboard Only)
+    app.get('/instances', (req, res) => {
+        const instances = getInstances();
+        const list = Object.keys(instances).map(id => ({
+            instance_id: `instance${id}`,
+            token: instances[id].token,
+            status: getSessionState(id)
+        }));
+        res.json(list);
+    });
+
     // Get Status
     app.get('/:instanceId/status', requireAuth, async (req, res) => {
         const status = getSessionState(req.instanceId);
