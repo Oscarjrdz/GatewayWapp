@@ -185,6 +185,32 @@ const initRoutes = (app) => {
         }
     });
     
+    // Get WhatsApp Profile Picture
+    app.get('/:instanceId/contacts/profile-picture', requireAuth, async (req, res) => {
+        const { to } = req.query;
+        if (!to) return res.status(400).json({ error: 'Phone number (to) is required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
+            // profilePictureUrl fetches the high-res link if possible
+            const ppUrl = await sock.profilePictureUrl(jid, 'image'); 
+            res.json({ jid, profile_picture: ppUrl });
+        } catch (err) {
+            // usually throws if user has privacy settings preventing access or no picture
+            console.error(err);
+            res.status(404).json({ error: 'No profile picture found or privacy settings prevent access' });
+        }
+    });
+
     // Settings Webhook
     app.post('/:instanceId/settings/webhook', requireAuth, (req, res) => {
         const { webhook_url, webhook_message_received, webhook_message_ack } = req.body;
