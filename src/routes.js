@@ -77,7 +77,18 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
-            const jid = formatJid(to);
+            let jid = formatJid(to);
+            
+            // Auto-resolve JID against WhatsApp database to fix Mexico 52 vs 521 or invalid numbers
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) {
+                    jid = result.jid;
+                } else {
+                    return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+                }
+            }
+
             const msg = await sock.sendMessage(jid, { text: body || '' });
             res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
         } catch (err) {
@@ -93,7 +104,13 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
-            const jid = formatJid(to);
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
             let mediaTypeOptions = {};
             if (image.startsWith('http')) {
                 mediaTypeOptions = { url: image };
@@ -116,7 +133,13 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
-            const jid = formatJid(to);
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
             let mediaTypeOptions = {};
             if (document.startsWith('http')) {
                 mediaTypeOptions = { url: document };
