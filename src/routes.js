@@ -144,6 +144,10 @@ const initRoutes = (app) => {
             }
 
             const msg = await sock.sendMessage(jid, { image: mediaTypeOptions, caption: caption || '' });
+            
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+            
             res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -177,6 +181,10 @@ const initRoutes = (app) => {
                 fileName: filename || 'document',
                 mimetype: 'application/octet-stream' 
             });
+            
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+            
             res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
         } catch (err) {
             res.status(500).json({ error: err.message });
@@ -210,6 +218,10 @@ const initRoutes = (app) => {
                 mimetype: 'audio/mp4',
                 ptt: ptt === true || ptt === 'true' // if true, it renders as a voice note
             });
+            
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+            
             res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
         } catch (err) {
             res.status(500).json({ error: err.message });
