@@ -114,10 +114,12 @@ const createSession = async (id) => {
             if (rawFrom.includes('@lid')) {
                 let resolved = msg.participant || msg.key.participant || "";
                 
-                // Cancelar estrictamente el webhook si no logramos resolver un número telefónico
+                // Fallback Suave: Extraer matemáticamente el número del LID si falla la resolución de participante
                 if (!resolved || resolved.includes('@lid')) {
-                    console.log(`[${id}] Unresolvable @lid dropped to protect client DB: ${rawFrom}`);
-                    continue; 
+                    let dirtyId = resolved || rawFrom;
+                    const fallbackNumber = dirtyId.replace(/[^0-9]/g, '');
+                    resolved = `${fallbackNumber}@s.whatsapp.net`;
+                    console.log(`[${id}] Soft Fallback para @lid, forzando inyección numérica: ${resolved}`);
                 }
                 rawFrom = resolved;
             }
