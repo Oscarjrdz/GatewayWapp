@@ -251,6 +251,52 @@ const initRoutes = (app) => {
         }
     });
 
+    // Publish WhatsApp Status (Story)
+    app.post('/:instanceId/stories', requireAuth, async (req, res) => {
+        const { type, text, image, video, caption, color, font, contacts } = req.body;
+        // type: 'text', 'image', 'video'
+        
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let mediaTypeOptions = null;
+            
+            if (type === 'text' && text) {
+                mediaTypeOptions = { 
+                    text: text, 
+                    backgroundColor: color || '#FF5733', 
+                    font: font || 1 
+                };
+            } else if (type === 'image' && image) {
+                const buf = image.startsWith('http') ? { url: image } : Buffer.from(image, 'base64');
+                mediaTypeOptions = { image: buf, caption: caption || '' };
+            } else if (type === 'video' && video) {
+                const buf = video.startsWith('http') ? { url: video } : Buffer.from(video, 'base64');
+                mediaTypeOptions = { video: buf, caption: caption || '' };
+            } else {
+                return res.status(400).json({ error: "Missing required payload: text, image or video depending on the 'type'." });
+            }
+
+            // Build Jid List for Audience
+            // By default, if the user leaves 'contacts' empty, the Baileys socket might broadcast to no one effectively, 
+            // so we strongly suggest the client provides an array of phone numbers (e.g. users active in DB).
+            const jidList = (contacts || []).map(formatJid);
+
+            const msg = await sock.sendMessage('status@broadcast', mediaTypeOptions, {
+                statusJidList: jidList.length > 0 ? jidList : undefined
+            });
+            
+            // Increment Sent Stats
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+            
+            res.json({ success: true, status: 'published', id: msg?.key?.id, type });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // Mark Messages as Read (Blue Ticks)
     app.post('/:instanceId/messages/read', requireAuth, async (req, res) => {
         const { messageId, to } = req.body;
