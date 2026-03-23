@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const NodeCache = require('node-cache');
 const path = require('path');
@@ -101,7 +101,7 @@ const createSession = async (id) => {
             currentReceived += 1;
             
             // UltraMsg Drop-In Replacement Adapter
-            let bodyText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || msg.message?.videoMessage?.caption || "";
+            let bodyText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || msg.message?.videoMessage?.caption || msg.message?.documentMessage?.caption || "";
             let msgType = "chat";
             if (msg.message?.imageMessage) msgType = "image";
             else if (msg.message?.documentMessage) msgType = "document";
@@ -109,12 +109,60 @@ const createSession = async (id) => {
             else if (msg.message?.videoMessage) msgType = "video";
             else if (msg.message?.stickerMessage) msgType = "sticker";
 
-            const rawFrom = msg.key.remoteJid || "";
+            // RESOLVER PROBLEMA DE @LID (Issue 1)
+            let rawFrom = msg.key.remoteJid || "";
+            if (rawFrom.includes('@lid')) {
+                let resolved = msg.participant || msg.key.participant || "";
+                
+                // Cancelar estrictamente el webhook si no logramos resolver un número telefónico
+                if (!resolved || resolved.includes('@lid')) {
+                    console.log(`[${id}] Unresolvable @lid dropped to protect client DB: ${rawFrom}`);
+                    continue; 
+                }
+                rawFrom = resolved;
+            }
+
             const fromCus = rawFrom.includes('@s.whatsapp.net') ? rawFrom.replace('@s.whatsapp.net', '@c.us') : rawFrom;
             
             let botNumber = "";
             if (sock.user && sock.user.id) {
                 botNumber = sock.user.id.split(':')[0] + '@c.us';
+            }
+
+            // AUTO-DESCARGA Y PUBLICACIÓN MULTIMEDIA CRIPTOGRÁFICA (Issue 2)
+            let mediaUrl = undefined;
+            if (msgType !== "chat" && msgType !== "sticker") {
+                try {
+                    const buffer = await downloadMediaMessage(msg, 'buffer', { }, { 
+                        logger,
+                        reuploadRequest: sock.updateMediaMessage
+                    });
+                    
+                    if (buffer) {
+                        const crypto = require('crypto');
+                        const mediaDir = path.resolve(__dirname, '../data/media');
+                        if (!fs.existsSync(mediaDir)) {
+                            fs.mkdirSync(mediaDir, { recursive: true });
+                        }
+                        
+                        let ext = "bin";
+                        const mime = msg.message[`${msgType}Message`]?.mimetype || "";
+                        if (mime.includes('jpeg') || mime.includes('jpg')) ext = 'jpg';
+                        else if (mime.includes('png')) ext = 'png';
+                        else if (mime.includes('pdf')) ext = 'pdf';
+                        else if (mime.includes('mp4')) ext = 'mp4';
+                        else if (mime.includes('ogg')) ext = 'ogg';
+
+                        const fileName = `${crypto.randomUUID()}.${ext}`;
+                        fs.writeFileSync(path.join(mediaDir, fileName), buffer);
+                        
+                        // URL pública inyectada
+                        const serverUrl = 'https://gatewaywapp-production.up.railway.app';
+                        mediaUrl = `${serverUrl}/media/${fileName}`;
+                    }
+                } catch (err) {
+                    console.error(`[${id}] Failed to decrypt or download media: `, err.message);
+                }
             }
 
             const adapterPayload = {
@@ -128,6 +176,10 @@ const createSession = async (id) => {
                 timestamp: msg.messageTimestamp,
                 __raw: msg
             };
+
+            if (mediaUrl) {
+                adapterPayload.media = mediaUrl;
+            }
 
             await sendWebhook(id, 'message_received', adapterPayload);
         }
