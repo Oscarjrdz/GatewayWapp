@@ -27,15 +27,13 @@ const requireAuth = (req, res, next) => {
 
 const formatJid = (number) => {
     if (!number) return '';
-    number = number.toString().replace(/[^0-9]/g, '');
-    if (!number.includes('@')) {
-        if (number.length > 18) {
-             number = `${number}@g.us`;
-        } else {
-             number = `${number}@s.whatsapp.net`;
-        }
-    }
-    return number;
+    let numStr = number.toString();
+    if (numStr.includes('@c.us')) numStr = numStr.replace('@c.us', '@s.whatsapp.net');
+    
+    let parts = numStr.split('@');
+    let bare = parts[0].replace(/[^0-9]/g, '');
+    let domain = parts[1] || (bare.length > 18 ? 'g.us' : 's.whatsapp.net');
+    return `${bare}@${domain}`;
 };
 
 const initRoutes = (app) => {

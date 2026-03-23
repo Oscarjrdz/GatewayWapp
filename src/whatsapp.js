@@ -99,7 +99,37 @@ const createSession = async (id) => {
 
         for (const msg of messages) {
             currentReceived += 1;
-            await sendWebhook(id, 'message_received', msg);
+            
+            // UltraMsg Drop-In Replacement Adapter
+            let bodyText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || msg.message?.videoMessage?.caption || "";
+            let msgType = "chat";
+            if (msg.message?.imageMessage) msgType = "image";
+            else if (msg.message?.documentMessage) msgType = "document";
+            else if (msg.message?.audioMessage) msgType = "audio";
+            else if (msg.message?.videoMessage) msgType = "video";
+            else if (msg.message?.stickerMessage) msgType = "sticker";
+
+            const rawFrom = msg.key.remoteJid || "";
+            const fromCus = rawFrom.includes('@s.whatsapp.net') ? rawFrom.replace('@s.whatsapp.net', '@c.us') : rawFrom;
+            
+            let botNumber = "";
+            if (sock.user && sock.user.id) {
+                botNumber = sock.user.id.split(':')[0] + '@c.us';
+            }
+
+            const adapterPayload = {
+                id: msg.key.id,
+                from: fromCus,
+                to: botNumber,
+                pushName: msg.pushName || "",
+                body: bodyText,
+                type: msgType,
+                fromMe: msg.key.fromMe || false,
+                timestamp: msg.messageTimestamp,
+                __raw: msg
+            };
+
+            await sendWebhook(id, 'message_received', adapterPayload);
         }
         
         updateInstance(id, { messages_received: currentReceived });
@@ -107,7 +137,31 @@ const createSession = async (id) => {
 
     sock.ev.on('messages.update', async (updates) => {
         for (const update of updates) {
-            await sendWebhook(id, 'message_ack', update);
+            // Check if it's a status notification (delivery/read)
+            if (update.update && update.update.status) {
+                const statusMap = {
+                    2: "sent",
+                    3: "delivered",
+                    4: "read"
+                };
+                const stringStatus = statusMap[update.update.status] || "unknown";
+                
+                let botNumber = "";
+                if (sock.user && sock.user.id) {
+                    botNumber = sock.user.id.split(':')[0] + '@c.us';
+                }
+                
+                const ackPayload = {
+                    id: update.key.id,
+                    status: stringStatus,
+                    to: botNumber,
+                    __raw: update
+                };
+                await sendWebhook(id, 'message_ack', ackPayload);
+            } else {
+                // Fallback for generic updates
+                await sendWebhook(id, 'message_update', update);
+            }
         }
     });
 
@@ -133,16 +187,13 @@ const deleteSession = async (id) => {
 
 const formatJid = (number) => {
     if (!number) return '';
-    number = number.toString().replace(/[^0-9]/g, '');
-    if (!number.includes('@')) {
-        // Decide if it's a group or private
-        if (number.length > 18) {
-             number = `${number}@g.us`;
-        } else {
-             number = `${number}@s.whatsapp.net`;
-        }
-    }
-    return number;
+    let numStr = number.toString();
+    if (numStr.includes('@c.us')) numStr = numStr.replace('@c.us', '@s.whatsapp.net');
+    
+    let parts = numStr.split('@');
+    let bare = parts[0].replace(/[^0-9]/g, '');
+    let domain = parts[1] || (bare.length > 18 ? 'g.us' : 's.whatsapp.net');
+    return `${bare}@${domain}`;
 };
 
 module.exports = {
