@@ -263,6 +263,43 @@ const initRoutes = (app) => {
         }
     });
 
+    // Send Location Message
+    app.post('/:instanceId/messages/location', requireAuth, async (req, res) => {
+        const { to, lat, lng, name, address } = req.body;
+        
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        if (lat === undefined || lng === undefined) {
+            return res.status(400).json({ error: 'lat and lng are required' });
+        }
+
+        try {
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
+            const msg = await sock.sendMessage(jid, { 
+                location: { 
+                    degreesLatitude: lat, 
+                    degreesLongitude: lng,
+                    name: name || undefined,
+                    address: address || undefined
+                }
+            });
+            
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+            
+            res.json({ messageId: msg.key.id, status: 'sent', id: msg.key.id });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // Send Presence (Typing, Recording, Online)
     app.post('/:instanceId/presence', requireAuth, async (req, res) => {
         const { to, status } = req.body;
