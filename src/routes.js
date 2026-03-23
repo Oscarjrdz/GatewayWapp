@@ -238,6 +238,29 @@ const initRoutes = (app) => {
             res.status(500).json({ error: err.message });
         }
     });
+
+    // Mark Messages as Read (Blue Ticks)
+    app.post('/:instanceId/messages/read', requireAuth, async (req, res) => {
+        const { messageId, to } = req.body;
+        
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        if (!messageId || !to) return res.status(400).json({ error: 'messageId and to are required' });
+
+        try {
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result && result.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
+            await sock.readMessages([{ remoteJid: jid, id: messageId }]);
+            res.json({ success: true, status: 'read', messageId });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
     
     // Get WhatsApp Profile Picture
     app.get('/:instanceId/contacts/profile-picture', requireAuth, async (req, res) => {
