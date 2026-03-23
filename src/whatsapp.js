@@ -109,22 +109,12 @@ const createSession = async (id) => {
             else if (msg.message?.videoMessage) msgType = "video";
             else if (msg.message?.stickerMessage) msgType = "sticker";
 
-            // RESOLVER PROBLEMA DE @LID (Issue 1)
-            let rawFrom = msg.key.remoteJid || "";
-            if (rawFrom.includes('@lid')) {
-                let resolved = msg.participant || msg.key.participant || "";
-                
-                // Fallback Suave: Extraer matemáticamente el número del LID si falla la resolución de participante
-                if (!resolved || resolved.includes('@lid')) {
-                    let dirtyId = resolved || rawFrom;
-                    const fallbackNumber = dirtyId.replace(/[^0-9]/g, '');
-                    resolved = `${fallbackNumber}@s.whatsapp.net`;
-                    console.log(`[${id}] Soft Fallback para @lid, forzando inyección numérica: ${resolved}`);
-                }
-                rawFrom = resolved;
+            // RESOLVER PROBLEMA DE @LID (Solución Definitiva usando llave interna de Multi-Device)
+            const realJid = msg.key.remoteJidAlt || msg.key.participant || msg.key.remoteJid || "";
+            let fromCus = String(realJid);
+            if (fromCus.includes('@s.whatsapp.net')) {
+                fromCus = fromCus.replace('@s.whatsapp.net', '@c.us');
             }
-
-            const fromCus = rawFrom.includes('@s.whatsapp.net') ? rawFrom.replace('@s.whatsapp.net', '@c.us') : rawFrom;
             
             let botNumber = "";
             if (sock.user && sock.user.id) {
