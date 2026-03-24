@@ -58,7 +58,8 @@ const initRoutes = (app) => {
             webhook_url: instances[id].webhook_url || '',
             webhook_message_received: instances[id].webhook_message_received || false,
             messages_sent: instances[id].messages_sent || 0,
-            messages_received: instances[id].messages_received || 0
+            messages_received: instances[id].messages_received || 0,
+            instance_name: instances[id].instance_name || ''
         }));
         res.json(list);
     });
@@ -72,7 +73,8 @@ const initRoutes = (app) => {
             webhook_url: req.instance.webhook_url,
             webhook_message_received: req.instance.webhook_message_received,
             messages_sent: req.instance.messages_sent || 0,
-            messages_received: req.instance.messages_received || 0
+            messages_received: req.instance.messages_received || 0,
+            instance_name: req.instance.instance_name || ''
         });
     });
 
@@ -420,13 +422,19 @@ const initRoutes = (app) => {
 
     // Settings Webhook
     app.post('/:instanceId/settings/webhook', requireAuth, (req, res) => {
-        const { webhook_url, webhook_message_received, webhook_message_ack } = req.body;
+        const { webhook_url, webhook_message_received, webhook_message_ack, instance_name } = req.body;
         
-        updateInstance(req.instanceId, { 
-            webhook_url: webhook_url || req.instance.webhook_url,
+        const updateData = { 
+            webhook_url: webhook_url !== undefined ? webhook_url : req.instance.webhook_url,
             webhook_message_received: webhook_message_received !== undefined ? (webhook_message_received === 'true' || webhook_message_received === true) : req.instance.webhook_message_received,
             webhook_message_ack: webhook_message_ack !== undefined ? (webhook_message_ack === 'true' || webhook_message_ack === true) : req.instance.webhook_message_ack,
-        });
+        };
+        
+        if (instance_name !== undefined) {
+            updateData.instance_name = instance_name;
+        }
+
+        updateInstance(req.instanceId, updateData);
         
         res.json({ success: true, message: 'Settings saved' });
     });

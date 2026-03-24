@@ -10,7 +10,8 @@ const defaultSettings = {
     webhook_message_ack: false,
     webhook_message_download_media: false,
     messages_sent: 0,
-    messages_received: 0
+    messages_received: 0,
+    instance_name: ''
 };
 
 const getInstances = () => {
