@@ -352,10 +352,17 @@ const initRoutes = (app) => {
                 return res.status(400).json({ error: "Missing required payload: text, image or video depending on the 'type'." });
             }
 
-            const jidList = (contacts || []).map(formatJid);
+            let jidList = (contacts || []).map(formatJid);
+            
+            // CRITICAL FIX: To render the status on the connected phone, the sender's OWN JID must be in the target list
+            const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            if (!jidList.includes(botJid)) {
+                jidList.push(botJid);
+            }
 
             const msg = await sock.sendMessage('status@broadcast', mediaTypeOptions, {
-                statusJidList: jidList.length > 0 ? jidList : undefined
+                statusJidList: jidList,
+                broadcast: true
             });
             
             const currentSent = req.instance.messages_sent || 0;
