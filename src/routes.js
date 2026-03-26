@@ -728,6 +728,25 @@ const initRoutes = (app) => {
         }
     });
 
+    // Block or Unblock a Contact
+    app.post('/:instanceId/contacts/block', requireAuth, async (req, res) => {
+        const { number, action } = req.body; // action: 'block' or 'unblock'
+        if (!number || (action !== 'block' && action !== 'unblock')) {
+            return res.status(400).json({ error: 'number and specific action (block/unblock) are required' });
+        }
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = formatJid(number);
+            await sock.updateBlockStatus(jid, action);
+            res.json({ success: true, jid, action });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // ─── Reactions ───────────────────────────────────────────────────────────────
 
     // React to a Message with an emoji
