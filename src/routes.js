@@ -352,16 +352,12 @@ const initRoutes = (app) => {
                 return res.status(400).json({ error: "Missing required payload: text, image or video depending on the 'type'." });
             }
 
-            // Build Jid List for Audience
-            // By default, if the user leaves 'contacts' empty, the Baileys socket might broadcast to no one effectively, 
-            // so we strongly suggest the client provides an array of phone numbers (e.g. users active in DB).
             const jidList = (contacts || []).map(formatJid);
 
             const msg = await sock.sendMessage('status@broadcast', mediaTypeOptions, {
                 statusJidList: jidList.length > 0 ? jidList : undefined
             });
             
-            // Increment Sent Stats
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
             
@@ -371,7 +367,274 @@ const initRoutes = (app) => {
         }
     });
 
+    // ─── WhatsApp Channels (Newsletters) ────────────────────────────────────────
+
+    // Create a new WhatsApp Channel
+    app.post('/:instanceId/channels', requireAuth, async (req, res) => {
+        const { name, description } = req.body;
+        if (!name) return res.status(400).json({ error: 'name is required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const channel = await sock.newsletterCreate(name, description || '');
+            res.json({ success: true, channel });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Get Channel Metadata (by JID or invite link)
+    app.get('/:instanceId/channels/:channelId', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        // channelId can be a full JID (xxx@newsletter) or an invite code
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const type = channelId.includes('@newsletter') ? 'jid' : 'invite';
+            const metadata = await sock.newsletterMetadata(type, channelId);
+            if (!metadata) return res.status(404).json({ error: 'Channel not found' });
+            res.json(metadata);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Get Channel Subscribers
+    app.get('/:instanceId/channels/:channelId/subscribers', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const result = await sock.newsletterSubscribers(channelId);
+            res.json(result);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Update Channel (name, description, or picture)
+    app.patch('/:instanceId/channels/:channelId', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        const { name, description, picture } = req.body;
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            if (name) await sock.newsletterUpdateName(channelId, name);
+            if (description) await sock.newsletterUpdateDescription(channelId, description);
+            if (picture) {
+                const buf = picture.startsWith('http') ? { url: picture } : Buffer.from(picture, 'base64');
+                await sock.newsletterUpdatePicture(channelId, buf);
+            }
+            res.json({ success: true, message: 'Channel updated' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Send a Message to a Channel
+    app.post('/:instanceId/channels/:channelId/messages', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        const { type, text, image, video, caption } = req.body;
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let content = null;
+            if (type === 'text' || (!type && text)) {
+                content = { text: text || '' };
+            } else if (type === 'image' && image) {
+                const buf = image.startsWith('http') ? { url: image } : Buffer.from(image, 'base64');
+                content = { image: buf, caption: caption || '' };
+            } else if (type === 'video' && video) {
+                const buf = video.startsWith('http') ? { url: video } : Buffer.from(video, 'base64');
+                content = { video: buf, caption: caption || '' };
+            } else {
+                return res.status(400).json({ error: "Missing required content: text, image, or video." });
+            }
+
+            const jid = channelId.includes('@newsletter') ? channelId : `${channelId}@newsletter`;
+            const msg = await sock.sendMessage(jid, content);
+
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
+
+            res.json({ success: true, id: msg?.key?.id, status: 'sent' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Follow a Channel
+    app.post('/:instanceId/channels/:channelId/follow', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            await sock.newsletterFollow(channelId);
+            res.json({ success: true, message: 'Channel followed' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Unfollow a Channel
+    app.post('/:instanceId/channels/:channelId/unfollow', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            await sock.newsletterUnfollow(channelId);
+            res.json({ success: true, message: 'Channel unfollowed' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Delete a Channel (only owner)
+    app.delete('/:instanceId/channels/:channelId', requireAuth, async (req, res) => {
+        const { channelId } = req.params;
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            await sock.newsletterDelete(channelId);
+            res.json({ success: true, message: 'Channel deleted' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ────────────────────────────────────────────────────────────────────────────
+
+    // ─── WhatsApp Groups ─────────────────────────────────────────────────────────
+
+    // Create a new Group
+    app.post('/:instanceId/groups', requireAuth, async (req, res) => {
+        const { name, participants } = req.body;
+        if (!name) return res.status(400).json({ error: 'name is required' });
+        if (!participants || !Array.isArray(participants) || participants.length === 0)
+            return res.status(400).json({ error: 'participants[] with at least 1 member is required' });
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const group = await sock.groupCreate(name, participants.map(formatJid));
+            res.json({ success: true, group });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Get All Groups (where this number participates)
+    app.get('/:instanceId/groups', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const groups = await sock.groupFetchAllParticipating();
+            res.json(groups);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Get Group Metadata
+    app.get('/:instanceId/groups/:groupId', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const metadata = await sock.groupMetadata(formatJid(req.params.groupId));
+            res.json(metadata);
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Manage Participants (add / remove / promote / demote)
+    app.post('/:instanceId/groups/:groupId/participants', requireAuth, async (req, res) => {
+        const { action, participants } = req.body;
+        if (!action || !participants || !Array.isArray(participants))
+            return res.status(400).json({ error: 'action and participants[] are required' });
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const result = await sock.groupParticipantsUpdate(formatJid(req.params.groupId), participants.map(formatJid), action);
+            res.json({ success: true, result });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Update Group (name / description / picture)
+    app.patch('/:instanceId/groups/:groupId', requireAuth, async (req, res) => {
+        const { name, description, picture } = req.body;
+        const jid = formatJid(req.params.groupId);
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            if (name) await sock.groupUpdateSubject(jid, name);
+            if (description !== undefined) await sock.groupUpdateDescription(jid, description);
+            if (picture) {
+                const buf = picture.startsWith('http') ? { url: picture } : Buffer.from(picture, 'base64');
+                await sock.updateProfilePicture(jid, buf);
+            }
+            res.json({ success: true, message: 'Group updated' });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Get Group Invite Link
+    app.get('/:instanceId/groups/:groupId/invite', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const code = await sock.groupInviteCode(formatJid(req.params.groupId));
+            res.json({ invite_link: `https://chat.whatsapp.com/${code}`, code });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Revoke Group Invite Link
+    app.post('/:instanceId/groups/:groupId/invite/revoke', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const code = await sock.groupRevokeInvite(formatJid(req.params.groupId));
+            res.json({ success: true, new_invite_link: `https://chat.whatsapp.com/${code}` });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Join Group by Invite Code
+    app.post('/:instanceId/groups/join', requireAuth, async (req, res) => {
+        const { code } = req.body;
+        if (!code) return res.status(400).json({ error: 'code is required' });
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const groupJid = await sock.groupAcceptInvite(code);
+            res.json({ success: true, group_jid: groupJid });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Leave Group
+    app.post('/:instanceId/groups/:groupId/leave', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            await sock.groupLeave(formatJid(req.params.groupId));
+            res.json({ success: true, message: 'Left the group' });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Update Group Settings (announcements / lock)
+    app.post('/:instanceId/groups/:groupId/settings', requireAuth, async (req, res) => {
+        const { setting } = req.body;
+        // setting: 'announcement' | 'not_announcement' | 'locked' | 'unlocked'
+        if (!setting) return res.status(400).json({ error: 'setting is required' });
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            await sock.groupSettingUpdate(formatJid(req.params.groupId), setting);
+            res.json({ success: true, setting });
+        } catch (err) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ────────────────────────────────────────────────────────────────────────────
+
     // Mark Messages as Read (Blue Ticks)
+
     app.post('/:instanceId/messages/read', requireAuth, async (req, res) => {
         const { messageId, to } = req.body;
         
