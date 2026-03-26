@@ -336,17 +336,37 @@ const initRoutes = (app) => {
         try {
             let mediaTypeOptions = null;
             
+            // Clean Base64 Data URI if present
+            const cleanBase64 = (str) => {
+                if (typeof str === 'string' && str.includes('base64,')) {
+                    return str.split('base64,')[1];
+                }
+                return str;
+            };
+
+            let parsedColor = '#FF5733';
+            if (color) {
+                // If it's a numeric string or integer, parse as ARGB integer
+                if (typeof color === 'number' || (typeof color === 'string' && /^\d+$/.test(color))) {
+                    parsedColor = Number(color);
+                } else if (typeof color === 'string') {
+                    parsedColor = color.startsWith('#') ? color : `#${color}`;
+                }
+            }
+            
             if (type === 'text' && text) {
                 mediaTypeOptions = { 
                     text: text, 
-                    backgroundColor: color || '#FF5733', 
+                    backgroundColor: parsedColor,
                     font: font || 1 
                 };
             } else if (type === 'image' && image) {
-                const buf = image.startsWith('http') ? { url: image } : Buffer.from(image, 'base64');
+                const imgStr = typeof image === 'string' ? image : '';
+                const buf = imgStr.startsWith('http') ? { url: imgStr } : Buffer.from(cleanBase64(imgStr), 'base64');
                 mediaTypeOptions = { image: buf, caption: caption || '' };
             } else if (type === 'video' && video) {
-                const buf = video.startsWith('http') ? { url: video } : Buffer.from(video, 'base64');
+                const vidStr = typeof video === 'string' ? video : '';
+                const buf = vidStr.startsWith('http') ? { url: vidStr } : Buffer.from(cleanBase64(vidStr), 'base64');
                 mediaTypeOptions = { video: buf, caption: caption || '' };
             } else {
                 return res.status(400).json({ error: "Missing required payload: text, image or video depending on the 'type'." });

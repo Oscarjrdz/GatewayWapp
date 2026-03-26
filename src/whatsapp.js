@@ -209,6 +209,25 @@ const createSession = async (id) => {
         }
     });
 
+    // Catch Story views (read receipts on status@broadcast usually come directly here)
+    sock.ev.on('message-receipt.update', async (updates) => {
+        for (const update of updates) {
+            let botNumber = "";
+            if (sock.user && sock.user.id) {
+                botNumber = sock.user.id.split(':')[0] + '@c.us';
+            }
+            
+            const ackPayload = {
+                id: update.key?.id || '',
+                status: "read",
+                to: botNumber,
+                __raw: update
+            };
+            
+            await sendWebhook(id, 'message_ack', ackPayload);
+        }
+    });
+
     const instanceInfo = getInstances()[id];
     if (instanceInfo) {
         sessions[id].token = instanceInfo.token;
