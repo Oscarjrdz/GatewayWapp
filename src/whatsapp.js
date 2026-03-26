@@ -217,13 +217,24 @@ const createSession = async (id) => {
                 botNumber = sock.user.id.split(':')[0] + '@c.us';
             }
             
+            // Format raw to match the client's expected nested key->participant object
+            const rawFormatted = {
+                key: {
+                    id: update.key?.id || '',
+                    remoteJid: update.key?.remoteJid || '',
+                    participant: update.receipt?.userJid || update.key?.participant || ''
+                },
+                receipt: update.receipt
+            };
+            
             const ackPayload = {
                 id: update.key?.id || '',
                 status: "read",
                 to: botNumber,
-                __raw: update
+                __raw: rawFormatted
             };
             
+            console.log(`[${id}] WEBHOOK POST message_ack (View) for ID: ${rawFormatted.key.id} from: ${rawFormatted.key.participant}`);
             await sendWebhook(id, 'message_ack', ackPayload);
         }
     });
