@@ -355,13 +355,10 @@ const initRoutes = (app) => {
                 }
             }
             
-            let statusOptions = {};
-            
             if (type === 'text' && text) {
-                mediaTypeOptions = { text: text };
-                // Baileys requires backgroundColor and font to be passed in the 3rd options parameter, not the content payload
-                statusOptions = { 
-                    backgroundColor: parsedColor, 
+                mediaTypeOptions = { 
+                    text: text,
+                    backgroundColor: parsedColor,
                     font: font || 1 
                 };
             } else if (type === 'image' && image) {
@@ -385,8 +382,7 @@ const initRoutes = (app) => {
 
             const msg = await sock.sendMessage('status@broadcast', mediaTypeOptions, {
                 statusJidList: jidList,
-                broadcast: true,
-                ...statusOptions
+                broadcast: true
             });
             
             const currentSent = req.instance.messages_sent || 0;
