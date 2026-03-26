@@ -344,13 +344,16 @@ const initRoutes = (app) => {
                 return str;
             };
 
-            let parsedColor = '#FF5733';
+            let parsedColor = 0xFF5733; // Default color
             if (color) {
-                // If it's a numeric string or integer, parse as ARGB integer
-                if (typeof color === 'number' || (typeof color === 'string' && /^\d+$/.test(color))) {
+                if (typeof color === 'number' || /^\d{9,10}$/.test(String(color))) {
+                    // It's already an ARGB integer
                     parsedColor = Number(color);
-                } else if (typeof color === 'string') {
-                    parsedColor = color.startsWith('#') ? color : `#${color}`;
+                } else {
+                    // Extract hex, append alpha FF if it's 6 length, then parse numeric to 16 base
+                    const hexDigits = String(color).replace(/[^0-9A-Fa-f]/g, '');
+                    const cleanHex = hexDigits.length === 6 ? 'FF' + hexDigits : hexDigits;
+                    parsedColor = parseInt(cleanHex, 16) || 0xFF5733;
                 }
             }
             
