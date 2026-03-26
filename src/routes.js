@@ -633,7 +633,207 @@ const initRoutes = (app) => {
 
     // ────────────────────────────────────────────────────────────────────────────
 
+    // ─── Broadcast / Lista de Difusión ───────────────────────────────────────────
+
+    // Send broadcast message to multiple numbers (individual chats, not a group)
+    app.post('/:instanceId/broadcast', requireAuth, async (req, res) => {
+        const { recipients, type, body, image, video, audio, document, caption, filename } = req.body;
+        if (!recipients || !Array.isArray(recipients) || recipients.length === 0)
+            return res.status(400).json({ error: 'recipients[] array is required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        const results = [];
+        let sent = 0;
+
+        for (const number of recipients) {
+            try {
+                let jid = formatJid(number);
+                // Resolve JID
+                const [result] = await sock.onWhatsApp(jid);
+                if (!result?.exists) {
+                    results.push({ to: number, status: 'failed', error: 'Number not on WhatsApp' });
+                    continue;
+                }
+                jid = result.jid;
+
+                let content = {};
+                if (type === 'image' && image) {
+                    const buf = image.startsWith('http') ? { url: image } : Buffer.from(image, 'base64');
+                    content = { image: buf, caption: caption || '' };
+                } else if (type === 'video' && video) {
+                    const buf = video.startsWith('http') ? { url: video } : Buffer.from(video, 'base64');
+                    content = { video: buf, caption: caption || '' };
+                } else if (type === 'audio' && audio) {
+                    const buf = audio.startsWith('http') ? { url: audio } : Buffer.from(audio, 'base64');
+                    content = { audio: buf, mimetype: 'audio/mp4', ptt: false };
+                } else if (type === 'document' && document) {
+                    const buf = document.startsWith('http') ? { url: document } : Buffer.from(document, 'base64');
+                    content = { document: buf, fileName: filename || 'file', mimetype: 'application/octet-stream' };
+                } else {
+                    content = { text: body || '' };
+                }
+
+                const msg = await sock.sendMessage(jid, content);
+                results.push({ to: number, status: 'sent', id: msg.key.id });
+                sent++;
+
+                // Small delay to avoid rate limiting
+                await new Promise(r => setTimeout(r, 300));
+            } catch (err) {
+                results.push({ to: number, status: 'failed', error: err.message });
+            }
+        }
+
+        const currentSent = req.instance.messages_sent || 0;
+        updateInstance(req.instanceId, { messages_sent: currentSent + sent });
+
+        res.json({ success: true, sent, total: recipients.length, results });
+    });
+
+    // ─── Contacts ────────────────────────────────────────────────────────────────
+
+    // Add or Edit a Contact (saves to WhatsApp contact list)
+    app.post('/:instanceId/contacts', requireAuth, async (req, res) => {
+        const { number, firstName, lastName } = req.body;
+        if (!number || !firstName) return res.status(400).json({ error: 'number and firstName are required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = formatJid(number);
+            await sock.addOrEditContact(jid, {
+                fullName: `${firstName}${lastName ? ' ' + lastName : ''}`,
+                firstName,
+                lastName: lastName || undefined
+            });
+            res.json({ success: true, jid, name: `${firstName}${lastName ? ' ' + lastName : ''}` });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Remove a Contact
+    app.delete('/:instanceId/contacts/:number', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+        try {
+            const jid = formatJid(req.params.number);
+            await sock.removeContact(jid);
+            res.json({ success: true, message: 'Contact removed' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ─── Reactions ───────────────────────────────────────────────────────────────
+
+    // React to a Message with an emoji
+    app.post('/:instanceId/messages/react', requireAuth, async (req, res) => {
+        const { to, messageId, emoji } = req.body;
+        // emoji: any emoji string like '❤️', '👍', '😂', or '' to remove reaction
+        if (!to || !messageId) return res.status(400).json({ error: 'to and messageId are required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let jid = formatJid(to);
+            if (!jid.includes('@g.us')) {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result?.exists) jid = result.jid;
+                else return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            }
+
+            const msg = await sock.sendMessage(jid, {
+                react: {
+                    text: emoji || '',  // '' removes the reaction
+                    key: { remoteJid: jid, id: messageId }
+                }
+            });
+
+            res.json({ success: true, id: msg?.key?.id, emoji: emoji || '(removed)' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ─── Labels / Etiquetas ──────────────────────────────────────────────────────
+
+    // Add Label to a Chat
+    app.post('/:instanceId/labels/chat', requireAuth, async (req, res) => {
+        const { to, labelId } = req.body;
+        if (!to || !labelId) return res.status(400).json({ error: 'to and labelId are required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = formatJid(to);
+            await sock.addChatLabel(jid, labelId);
+            res.json({ success: true, message: 'Label added to chat' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Remove Label from a Chat
+    app.delete('/:instanceId/labels/chat', requireAuth, async (req, res) => {
+        const { to, labelId } = req.body;
+        if (!to || !labelId) return res.status(400).json({ error: 'to and labelId are required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = formatJid(to);
+            await sock.removeChatLabel(jid, labelId);
+            res.json({ success: true, message: 'Label removed from chat' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Add Label to a specific Message
+    app.post('/:instanceId/labels/message', requireAuth, async (req, res) => {
+        const { to, messageId, labelId } = req.body;
+        if (!to || !messageId || !labelId) return res.status(400).json({ error: 'to, messageId and labelId are required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = formatJid(to);
+            await sock.addMessageLabel(jid, messageId, labelId);
+            res.json({ success: true, message: 'Label added to message' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Remove Label from a specific Message
+    app.delete('/:instanceId/labels/message', requireAuth, async (req, res) => {
+        const { to, messageId, labelId } = req.body;
+        if (!to || !messageId || !labelId) return res.status(400).json({ error: 'to, messageId and labelId are required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = formatJid(to);
+            await sock.removeMessageLabel(jid, messageId, labelId);
+            res.json({ success: true, message: 'Label removed from message' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ────────────────────────────────────────────────────────────────────────────
+
     // Mark Messages as Read (Blue Ticks)
+
 
     app.post('/:instanceId/messages/read', requireAuth, async (req, res) => {
         const { messageId, to } = req.body;
