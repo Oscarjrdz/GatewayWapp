@@ -347,20 +347,21 @@ const initRoutes = (app) => {
             let parsedColor = 0xFF5733; // Default color
             if (color) {
                 if (typeof color === 'number' || /^\d{9,10}$/.test(String(color))) {
-                    // It's already an ARGB integer
                     parsedColor = Number(color);
                 } else {
-                    // Extract hex, append alpha FF if it's 6 length, then parse numeric to 16 base
                     const hexDigits = String(color).replace(/[^0-9A-Fa-f]/g, '');
                     const cleanHex = hexDigits.length === 6 ? 'FF' + hexDigits : hexDigits;
                     parsedColor = parseInt(cleanHex, 16) || 0xFF5733;
                 }
             }
             
+            let statusOptions = {};
+            
             if (type === 'text' && text) {
-                mediaTypeOptions = { 
-                    text: text, 
-                    backgroundColor: parsedColor,
+                mediaTypeOptions = { text: text };
+                // Baileys requires backgroundColor and font to be passed in the 3rd options parameter, not the content payload
+                statusOptions = { 
+                    backgroundColor: parsedColor, 
                     font: font || 1 
                 };
             } else if (type === 'image' && image) {
@@ -377,7 +378,6 @@ const initRoutes = (app) => {
 
             let jidList = (contacts || []).map(formatJid);
             
-            // CRITICAL FIX: To render the status on the connected phone, the sender's OWN JID must be in the target list
             const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
             if (!jidList.includes(botJid)) {
                 jidList.push(botJid);
@@ -385,7 +385,8 @@ const initRoutes = (app) => {
 
             const msg = await sock.sendMessage('status@broadcast', mediaTypeOptions, {
                 statusJidList: jidList,
-                broadcast: true
+                broadcast: true,
+                ...statusOptions
             });
             
             const currentSent = req.instance.messages_sent || 0;
