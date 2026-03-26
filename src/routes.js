@@ -394,6 +394,28 @@ const initRoutes = (app) => {
         }
     });
 
+    // Delete WhatsApp Status (Story)
+    app.delete('/:instanceId/stories/:statusId', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        const { statusId } = req.params;
+
+        try {
+            await sock.sendMessage('status@broadcast', { 
+                delete: { 
+                    remoteJid: 'status@broadcast', 
+                    id: statusId, 
+                    fromMe: true 
+                } 
+            });
+            
+            res.json({ success: true, action: 'deleted', id: statusId });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // ─── WhatsApp Channels (Newsletters) ────────────────────────────────────────
 
     // Create a new WhatsApp Channel
