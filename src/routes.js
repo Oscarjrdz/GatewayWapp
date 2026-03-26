@@ -400,14 +400,25 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         const { statusId } = req.params;
+        const { contacts } = req.body || {}; // Axios and Fetch allow body in DELETE
 
         try {
+            // For the revoke to reach the phone and the contacts, they must be specified exactly as in creation
+            let jidList = (contacts || []).map(formatJid);
+            const botJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+            if (!jidList.includes(botJid)) {
+                jidList.push(botJid);
+            }
+
             await sock.sendMessage('status@broadcast', { 
                 delete: { 
                     remoteJid: 'status@broadcast', 
                     id: statusId, 
                     fromMe: true 
                 } 
+            }, {
+                statusJidList: jidList,
+                broadcast: true
             });
             
             res.json({ success: true, action: 'deleted', id: statusId });
