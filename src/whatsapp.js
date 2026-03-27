@@ -9,6 +9,8 @@ const { sendWebhook } = require('./webhook');
 
 const sessions = {};
 const msgRetryCounterCache = new NodeCache();
+// ADD userDevicesCache to prevent querying device lists unnecessarily (Anti-Ban)
+const userDevicesCache = new NodeCache();
 
 const logger = pino({ level: 'silent' });
 
@@ -59,10 +61,15 @@ const createSession = async (id) => {
         markOnlineOnConnect: false, // Don't broadcast online status immediately to avoid spam flags
         syncFullHistory: false, // Prevent overloading the session socket on startup
         receivePendingRequests: false, // Delay heavy processing
-        generateHighQualityLinkPreview: true,
+        generateHighQualityLinkPreview: false, // False prevents Node.js HTTP leaks displaying "axios/node" as User-Agent to external URLs
         msgRetryCounterCache,
+        userDevicesCache, // Essential to prevent requerying WhatsApp servers for keys every message
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 15000, // Send keep-alives to prevent WebSocket termination by ISP/WhatsApp
+        getMessage: async (key) => {
+            // Needed to prevent crashing on quoted messages WhatsApp forces us to decrypt
+            return { conversation: '' };
+        }
     });
 
     // Automatically reject incoming voice/video calls to prevent session instability or flags
@@ -119,6 +126,12 @@ const createSession = async (id) => {
         let currentReceived = instances[id]?.messages_received || 0;
 
         for (const msg of messages) {
+            // PREVENT CRASH/BANS: Ignore incoming broadcasted statuses from other people.
+            // Downloading hundreds of candidates' video/picture statuses will stall the WebSocket and trigger bans
+            if (msg.key?.remoteJid === 'status@broadcast' && !msg.key?.fromMe) {
+                continue;
+            }
+
             currentReceived += 1;
             
             // UltraMsg Drop-In Replacement Adapter
