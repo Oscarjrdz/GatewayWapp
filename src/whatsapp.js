@@ -54,8 +54,29 @@ const createSession = async (id) => {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        msgRetryCounterCache,
+        // Anti-ban & Session Stability configs (Enterprise-grade)
+        browser: ['Mac OS', 'Chrome', '125.0.0.0'], // Fingerprint as legitimate desktop Chrome
+        markOnlineOnConnect: false, // Don't broadcast online status immediately to avoid spam flags
+        syncFullHistory: false, // Prevent overloading the session socket on startup
+        receivePendingRequests: false, // Delay heavy processing
         generateHighQualityLinkPreview: true,
+        msgRetryCounterCache,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 15000, // Send keep-alives to prevent WebSocket termination by ISP/WhatsApp
+    });
+
+    // Automatically reject incoming voice/video calls to prevent session instability or flags
+    sock.ev.on('call', async (calls) => {
+        for (const call of calls) {
+            if (call.status === 'offer') {
+                try {
+                    await sock.rejectCall(call.id, call.from);
+                    console.log(`[${id}] Auto-rejected call from ${call.from} to protect session.`);
+                } catch (err) {
+                    console.log(`[${id}] Failed to reject call:`, err);
+                }
+            }
+        }
     });
 
     sessions[id] = { sock, status: 'loading', qr: null, credsPath: sessionDir };

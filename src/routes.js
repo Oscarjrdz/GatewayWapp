@@ -91,6 +91,16 @@ const initRoutes = (app) => {
         res.json({ success: true, message: 'Instance deleted' });
     });
 
+    // Reconnect
+    app.post('/:instanceId/reconnect', requireAuth, async (req, res) => {
+        try {
+            await createSession(req.instanceId);
+            res.json({ success: true, message: 'Reconnection triggered' });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // Send Text Message
     app.post('/:instanceId/messages/chat', requireAuth, async (req, res) => {
         const { to, body } = req.body;
