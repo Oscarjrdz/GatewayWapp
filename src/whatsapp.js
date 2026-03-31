@@ -102,15 +102,25 @@ const createSession = async (id) => {
         if (connection === 'close') {
             const reason = lastDisconnect?.error?.output?.statusCode;
             console.log(`[${id}] Connection closed. Reason: ${reason}`);
-            sessions[id].status = 'disconnected';
+            
+            if (sessions[id]) {
+                sessions[id].status = 'disconnected';
+            }
             
             if (reason === DisconnectReason.loggedOut) {
                 console.log(`[${id}] Logged out. Deleting session files...`);
-                fs.rmSync(sessionDir, { recursive: true, force: true });
+                if (fs.existsSync(sessionDir)) {
+                    fs.rmSync(sessionDir, { recursive: true, force: true });
+                }
                 delete sessions[id];
-            } else {
-                console.log(`[${id}] Reconnecting...`);
+            }
+            
+            const instances = getInstances();
+            if (instances[id]) {
+                console.log(`[${id}] Reconnecting (or generating new QR)...`);
                 setTimeout(() => createSession(id), 5000);
+            } else {
+                console.log(`[${id}] Instance removed from store. Stopping reconnection.`);
             }
         } else if (connection === 'open') {
             console.log(`[${id}] Connection opened!`);
