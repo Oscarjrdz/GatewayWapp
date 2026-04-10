@@ -6,6 +6,7 @@ const fs = require('fs');
 const qrcode = require('qrcode');
 const { getInstances, updateInstance } = require('./store');
 const { sendWebhook } = require('./webhook');
+const { setFirstConnected, skipWarmup } = require('./antiban');
 
 const sessions = {};
 const msgRetryCounterCache = new NodeCache();
@@ -31,6 +32,8 @@ const getSocket = (id) => {
 const loadSessions = async () => {
     const instances = getInstances();
     for (const id of Object.keys(instances)) {
+        // Existing sessions are established numbers — skip warm-up
+        skipWarmup(id);
         await createSession(id);
     }
 };
@@ -126,6 +129,8 @@ const createSession = async (id) => {
             console.log(`[${id}] Connection opened!`);
             sessions[id].status = 'authenticated';
             sessions[id].qr = null;
+            // Track first connection for warm-up protocol (new numbers)
+            setFirstConnected(id);
         }
     });
 
@@ -294,11 +299,21 @@ const createSession = async (id) => {
 const deleteSession = async (id) => {
     if (sessions[id]) {
         if (sessions[id].sock) {
-            sessions[id].sock.logout();
-            sessions[id].sock.end(undefined);
+            try {
+                await sessions[id].sock.logout();
+            } catch (err) {
+                console.log(`[${id}] Logout failed (may already be disconnected): ${err.message}`);
+            }
+            try {
+                sessions[id].sock.end(undefined);
+            } catch (err) {
+                // Silent — socket may already be closed
+            }
         }
         const sessionDir = path.resolve(__dirname, `../data/sessions/${id}`);
-        fs.rmSync(sessionDir, { recursive: true, force: true });
+        if (fs.existsSync(sessionDir)) {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
         delete sessions[id];
     }
 };

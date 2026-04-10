@@ -2,6 +2,7 @@ const express = require('express');
 const { getInstances, updateInstance, deleteInstance, defaultSettings } = require('./store');
 const { createSession, getSessionState, getSessionQr, getSocket, deleteSession } = require('./whatsapp');
 const { v4: uuidv4 } = require('uuid');
+const { sendSafe, canSendNow, getHealthReport, getMetrics, skipWarmup, getQueue, humanize, humanizeAfter, fingerprintText } = require('./antiban');
 
 const requireAuth = (req, res, next) => {
     let instanceId = req.params.instanceId;
@@ -86,7 +87,12 @@ const initRoutes = (app) => {
 
     // Logout
     app.post('/:instanceId/logout', requireAuth, async (req, res) => {
-        await deleteSession(req.instanceId);
+        try {
+            await deleteSession(req.instanceId);
+        } catch (err) {
+            console.error(`[${req.instanceId}] Error during session deletion: ${err.message}`);
+        }
+        // Always remove from store, even if session cleanup failed
         deleteInstance(req.instanceId);
         res.json({ success: true, message: 'Instance deleted' });
     });
@@ -101,9 +107,9 @@ const initRoutes = (app) => {
         }
     });
 
-    // Send Text Message
+    // Send Text Message (Anti-Ban Protected)
     app.post('/:instanceId/messages/chat', requireAuth, async (req, res) => {
-        const { to, body } = req.body;
+        const { to, body, priority } = req.body;
         
         const sock = getSocket(req.instanceId);
         if (!sock) return res.status(400).json({ error: 'Session not active' });
@@ -121,7 +127,9 @@ const initRoutes = (app) => {
                 }
             }
 
-            const msg = await sock.sendMessage(jid, { text: body || '' });
+            // Route through Anti-Ban Shield
+            const isReply = priority === 'reply';
+            const msg = await sendSafe(req.instanceId, sock, jid, { text: body || '' }, { isReply });
             
             // Increment Sent
             const currentSent = req.instance.messages_sent || 0;
@@ -133,7 +141,7 @@ const initRoutes = (app) => {
         }
     });
 
-    // Send Image Message
+    // Send Image Message (Anti-Ban Protected)
     app.post('/:instanceId/messages/image', requireAuth, async (req, res) => {
         const { to, image, caption } = req.body;
         
@@ -155,7 +163,7 @@ const initRoutes = (app) => {
                 mediaTypeOptions = Buffer.from(image, 'base64');
             }
 
-            const msg = await sock.sendMessage(jid, { image: mediaTypeOptions, caption: caption || '' });
+            const msg = await sendSafe(req.instanceId, sock, jid, { image: mediaTypeOptions, caption: caption || '' });
             
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
@@ -703,9 +711,9 @@ const initRoutes = (app) => {
 
     // ────────────────────────────────────────────────────────────────────────────
 
-    // ─── Broadcast / Lista de Difusión ───────────────────────────────────────────
+    // ─── Broadcast / Lista de Difusión (Anti-Ban Protected) ──────────────────────
 
-    // Send broadcast message to multiple numbers (individual chats, not a group)
+    // Send broadcast message to multiple numbers (routed through Anti-Ban queue)
     app.post('/:instanceId/broadcast', requireAuth, async (req, res) => {
         const { recipients, type, body, image, video, audio, document, caption, filename } = req.body;
         if (!recipients || !Array.isArray(recipients) || recipients.length === 0)
@@ -714,16 +722,28 @@ const initRoutes = (app) => {
         const sock = getSocket(req.instanceId);
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
-        const results = [];
-        let sent = 0;
+        // Pre-flight: check if we can even start
+        const preflight = canSendNow(req.instanceId);
+        if (!preflight.allowed) {
+            return res.status(429).json({
+                error: 'Rate limit active',
+                reason: preflight.reason,
+                retryAfterMs: preflight.waitMs,
+                queueSize: preflight.queueSize
+            });
+        }
+
+        // Queue all messages with BROADCAST priority (lowest)
+        const promises = [];
+        const failedNumbers = [];
 
         for (const number of recipients) {
             try {
                 let jid = formatJid(number);
-                // Resolve JID
+                // Resolve JID first (this is fast and doesn't count as a message)
                 const [result] = await sock.onWhatsApp(jid);
                 if (!result?.exists) {
-                    results.push({ to: number, status: 'failed', error: 'Number not on WhatsApp' });
+                    failedNumbers.push({ to: number, status: 'failed', error: 'Number not on WhatsApp' });
                     continue;
                 }
                 jid = result.jid;
@@ -745,21 +765,37 @@ const initRoutes = (app) => {
                     content = { text: body || '' };
                 }
 
-                const msg = await sock.sendMessage(jid, content);
-                results.push({ to: number, status: 'sent', id: msg.key.id });
-                sent++;
-
-                // Small delay to avoid rate limiting
-                await new Promise(r => setTimeout(r, 300));
+                // Enqueue with broadcast priority — the queue handles delays, typing, fingerprinting
+                promises.push(
+                    sendSafe(req.instanceId, sock, jid, content, { isBroadcast: true })
+                        .then(msg => ({ to: number, status: 'queued', id: msg.key.id }))
+                        .catch(err => ({ to: number, status: 'failed', error: err.message }))
+                );
             } catch (err) {
-                results.push({ to: number, status: 'failed', error: err.message });
+                failedNumbers.push({ to: number, status: 'failed', error: err.message });
             }
         }
 
-        const currentSent = req.instance.messages_sent || 0;
-        updateInstance(req.instanceId, { messages_sent: currentSent + sent });
+        // Respond immediately — messages are being sent through the safe queue
+        const queueSize = getQueue(req.instanceId).getQueueSize();
+        res.json({
+            success: true,
+            queued: promises.length,
+            failed: failedNumbers.length,
+            total: recipients.length,
+            failedNumbers,
+            message: `${promises.length} messages queued for safe delivery. Monitor via /antiban/health.`,
+            queueSize,
+            estimatedDeliveryMinutes: Math.round((promises.length * 6) / 60) // ~6s avg per message
+        });
 
-        res.json({ success: true, sent, total: recipients.length, results });
+        // Process results in background and update counters
+        Promise.allSettled(promises).then(results => {
+            const successCount = results.filter(r => r.status === 'fulfilled' && r.value?.status === 'queued').length;
+            const currentSent = req.instance.messages_sent || 0;
+            updateInstance(req.instanceId, { messages_sent: currentSent + successCount });
+            console.log(`[AntiBan][${req.instanceId}] 📊 Broadcast complete: ${successCount}/${recipients.length} delivered`);
+        });
     });
 
     // ─── Contacts ────────────────────────────────────────────────────────────────
@@ -989,6 +1025,57 @@ const initRoutes = (app) => {
         updateInstance(req.instanceId, updateData);
         
         res.json({ success: true, message: 'Settings saved' });
+    });
+
+    // ─── Anti-Ban Health Monitor ─────────────────────────────────────────────────
+
+    // Get real-time anti-ban health status for all instances
+    app.get('/antiban/health', (req, res) => {
+        const report = getHealthReport();
+        res.json(report);
+    });
+
+    // Get health for specific instance
+    app.get('/antiban/health/:instanceId', (req, res) => {
+        let instanceId = req.params.instanceId;
+        if (instanceId.startsWith('instance')) {
+            instanceId = instanceId.replace('instance', '');
+        }
+        const report = getHealthReport(instanceId);
+        res.json(report);
+    });
+
+    // Skip warm-up for an established number
+    app.post('/antiban/skip-warmup/:instanceId', (req, res) => {
+        let instanceId = req.params.instanceId;
+        if (instanceId.startsWith('instance')) {
+            instanceId = instanceId.replace('instance', '');
+        }
+        skipWarmup(instanceId);
+        res.json({ success: true, message: `Warm-up skipped for ${instanceId}` });
+    });
+
+    // Pause/Resume queue for an instance
+    app.post('/antiban/queue/:instanceId/:action', (req, res) => {
+        let instanceId = req.params.instanceId;
+        if (instanceId.startsWith('instance')) {
+            instanceId = instanceId.replace('instance', '');
+        }
+        const { action } = req.params;
+        const queue = getQueue(instanceId);
+        
+        if (action === 'pause') {
+            queue.pause();
+            res.json({ success: true, message: 'Queue paused', queueSize: queue.getQueueSize() });
+        } else if (action === 'resume') {
+            queue.resume();
+            res.json({ success: true, message: 'Queue resumed', queueSize: queue.getQueueSize() });
+        } else if (action === 'clear') {
+            queue.clear();
+            res.json({ success: true, message: 'Queue cleared' });
+        } else {
+            res.status(400).json({ error: 'Invalid action. Use: pause, resume, or clear' });
+        }
     });
 };
 
