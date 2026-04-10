@@ -26,8 +26,8 @@ const DEFAULT_CONFIG = {
     
     // Humanizer delays (milliseconds) — THE CORE PROTECTION
     typingDelayPerChar: 25,       // ~25ms per character (fast but realistic)
-    typingMinDelay: 1500,         // Minimum 1.5 seconds of "typing"
-    typingMaxDelay: 5000,         // Maximum 5 seconds
+    typingMinDelay: 1000,         // Minimum 1 second of "typing"
+    typingMaxDelay: 3000,         // Maximum 3 seconds
     
     // Smart delays between messages — keeps it natural without being slow
     baseDelayMin: 1500,           // 1.5 seconds minimum between messages
