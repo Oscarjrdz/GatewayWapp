@@ -33,13 +33,13 @@ const DEFAULT_CONFIG = {
     baseDelayMin: 1500,           // 1.5 seconds minimum between messages
     baseDelayMax: 4000,           // 4 seconds maximum between messages
     
-    // Fatigue simulation — subtle micro-pauses, not full breaks
+    // Fatigue simulation — fixed pauses
     burstPauseEvery: 20,          // Every 20 messages...
-    burstPauseMin: 5000,          // ...pause for 5-15 seconds
-    burstPauseMax: 15000,
+    burstPauseMin: 5000,          // ...pause for exactly 5 seconds
+    burstPauseMax: 5000,
     longBreakEvery: 50,           // Every 50 messages...
-    longBreakMin: 15000,          // ...pause for 15-30 seconds
-    longBreakMax: 30000,
+    longBreakMin: 10000,          // ...pause for exactly 10 seconds
+    longBreakMax: 10000,
     
     // Warm-up — DISABLED (all numbers treated as established)
     warmupSchedule: [],
