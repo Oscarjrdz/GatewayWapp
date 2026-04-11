@@ -159,10 +159,20 @@ const createSession = async (id) => {
             else if (msg.message?.stickerMessage) msgType = "sticker";
 
             // RESOLVER PROBLEMA DE @LID (Solución Definitiva usando llave interna de Multi-Device)
-            const realJid = msg.key.remoteJidAlt || msg.key.participant || msg.key.remoteJid || "";
-            let fromCus = String(realJid);
-            if (fromCus.includes('@s.whatsapp.net')) {
-                fromCus = fromCus.replace('@s.whatsapp.net', '@c.us');
+            let fromCus = "";
+            let author = undefined;
+            const isGroup = msg.key.remoteJid && msg.key.remoteJid.includes('@g.us');
+
+            if (isGroup) {
+                fromCus = msg.key.remoteJid;
+                author = msg.key.participant || msg.key.remoteJidAlt || "";
+                if (author.includes('@s.whatsapp.net')) author = author.replace('@s.whatsapp.net', '@c.us');
+            } else {
+                const realJid = msg.key.remoteJidAlt || msg.key.participant || msg.key.remoteJid || "";
+                fromCus = String(realJid);
+                if (fromCus.includes('@s.whatsapp.net')) {
+                    fromCus = fromCus.replace('@s.whatsapp.net', '@c.us');
+                }
             }
             
             let botNumber = "";
@@ -210,6 +220,7 @@ const createSession = async (id) => {
                 id: msg.key.id,
                 from: fromCus,
                 to: botNumber,
+                author: author, // Quien mandó el mensaje en el grupo (si es grupo)
                 pushName: msg.pushName || "",
                 body: bodyText,
                 type: msgType,
