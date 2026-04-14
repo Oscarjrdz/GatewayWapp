@@ -313,20 +313,16 @@ function recordMessageReceived(instanceId) {
 
 /**
  * Records a JID as a "known contact" — someone who has messaged us.
- * This is critical for Whapi's riskFactorContacts metric:
- * the more recipients that know us, the safer our account.
  */
 function recordKnownContact(instanceId, jid) {
     const metrics = getMetrics(instanceId);
     const sizeBefore = metrics.knownContacts.size;
     metrics.knownContacts.add(jid);
-    // Only trigger save if a new contact was added
     if (metrics.knownContacts.size > sizeBefore) {
         debouncedSave();
     }
 }
 
-// ─── Layer 3: Smart Delay with Jitter + Fatigue ──────────────────────────────
 
 /**
  * Calculates the delay to wait BEFORE sending the next message.
@@ -356,12 +352,12 @@ function calculateSmartDelay(instanceId, config = DEFAULT_CONFIG) {
 
 // ─── Layer 4: Content Fingerprint Variation ──────────────────────────────────
 
-// Zero-width characters that are invisible but change the message hash
+// Only use zero-width chars that DON'T participate in emoji sequences
+// ❌ U+200D (ZWJ) REMOVED — it's used to compose emojis like 👨‍👩‍👧
+// ❌ U+FEFF (BOM) REMOVED — causes rendering issues in some WhatsApp clients
 const ZERO_WIDTH_CHARS = [
-    '\u200B', // Zero-width space
-    '\u200C', // Zero-width non-joiner
-    '\u200D', // Zero-width joiner
-    '\uFEFF', // Zero-width no-break space
+    '\u200B', // Zero-width space (safe — never part of emoji sequences)
+    '\u200C', // Zero-width non-joiner (safe — breaks ligatures, not emojis)
 ];
 
 /**
@@ -369,33 +365,60 @@ const ZERO_WIDTH_CHARS = [
  * WhatsApp from detecting identical mass messages.
  * The text looks exactly the same to humans but has a unique hash.
  * 
- * IMPORTANT: Only inserts at safe positions (word boundaries, after
- * spaces/punctuation) to avoid corrupting multi-byte emoji codepoints.
+ * IMPORTANT: Uses Array.from() to iterate full Unicode codepoints and
+ * only inserts at safe boundaries (after spaces/punctuation), never
+ * adjacent to emojis or inside multi-byte characters.
  */
 function fingerprintText(text) {
     if (!text || typeof text !== 'string') return text;
     
-    // Collect safe insertion positions — boundaries between characters
-    // that won't break multi-byte emoji/surrogate pairs.
-    // We use Array.from() to correctly iterate over full Unicode codepoints
-    // (including emojis) instead of individual UTF-16 code units.
+    // Iterate by full Unicode codepoints (emojis = 1 element, not 2 surrogates)
     const chars = Array.from(text);
     const safePositions = [];
     
+    // Helper: check if a codepoint is an emoji or emoji-component
+    function isEmoji(char) {
+        if (!char) return false;
+        const cp = char.codePointAt(0);
+        return (
+            (cp >= 0x1F600 && cp <= 0x1F64F) || // Emoticons
+            (cp >= 0x1F300 && cp <= 0x1F5FF) || // Misc Symbols & Pictographs
+            (cp >= 0x1F680 && cp <= 0x1F6FF) || // Transport & Map
+            (cp >= 0x1F700 && cp <= 0x1F77F) || // Alchemical Symbols
+            (cp >= 0x1F780 && cp <= 0x1F7FF) || // Geometric Shapes Extended
+            (cp >= 0x1F800 && cp <= 0x1F8FF) || // Supplemental Arrows-C
+            (cp >= 0x1F900 && cp <= 0x1F9FF) || // Supplemental Symbols
+            (cp >= 0x1FA00 && cp <= 0x1FA6F) || // Chess Symbols
+            (cp >= 0x1FA70 && cp <= 0x1FAFF) || // Symbols Extended-A
+            (cp >= 0x2600 && cp <= 0x26FF) ||   // Misc Symbols
+            (cp >= 0x2700 && cp <= 0x27BF) ||   // Dingbats
+            (cp >= 0xFE00 && cp <= 0xFE0F) ||   // Variation Selectors
+            (cp >= 0x200D && cp <= 0x200D) ||   // ZWJ (part of compound emojis)
+            (cp >= 0xE0020 && cp <= 0xE007F) || // Tags (flag sequences)
+            (cp >= 0x1F1E0 && cp <= 0x1F1FF)    // Regional Indicators (flags)
+        );
+    }
+    
     for (let i = 0; i <= chars.length; i++) {
-        // Position 0 (start) and chars.length (end) are always safe
+        const prevChar = chars[i - 1];
+        const nextChar = chars[i];
+        
+        // Never insert adjacent to any emoji character
+        if (isEmoji(prevChar) || isEmoji(nextChar)) continue;
+        
+        // Position 0 (start) and end are safe if not near emoji
         if (i === 0 || i === chars.length) {
             safePositions.push(i);
             continue;
         }
-        const prevChar = chars[i - 1];
-        // Safe to insert after: spaces, newlines, punctuation, commas, periods, etc.
-        if (/[\s,.;:!?¡¿\-–—\n\r\t()[\]{}]/.test(prevChar)) {
+        
+        // Safe to insert after: spaces, newlines, punctuation
+        if (/[\s,.;:!?¡¿\-–—\n\r\t()\[\]{}]/.test(prevChar)) {
             safePositions.push(i);
         }
     }
     
-    // If very few safe positions found, just append at the end
+    // If very few safe positions, just append zero-width at the very end
     if (safePositions.length < 2) {
         const zwc = ZERO_WIDTH_CHARS[Math.floor(Math.random() * ZERO_WIDTH_CHARS.length)];
         return text + zwc;
@@ -406,11 +429,10 @@ function fingerprintText(text) {
     
     // Shuffle and pick positions (avoid duplicates)
     const shuffled = safePositions.sort(() => Math.random() - 0.5);
-    const chosen = shuffled.slice(0, numInserts).sort((a, b) => b - a); // Sort descending to insert from end
+    const chosen = shuffled.slice(0, numInserts).sort((a, b) => b - a);
     
     for (const pos of chosen) {
         const zwc = ZERO_WIDTH_CHARS[Math.floor(Math.random() * ZERO_WIDTH_CHARS.length)];
-        // Rebuild using the codepoint array to keep emoji intact
         chars.splice(pos, 0, zwc);
     }
     
