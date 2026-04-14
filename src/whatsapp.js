@@ -4,14 +4,74 @@ const NodeCache = require('node-cache');
 const path = require('path');
 const fs = require('fs');
 const qrcode = require('qrcode');
+const crypto = require('crypto');
 const { getInstances, updateInstance } = require('./store');
 const { sendWebhook } = require('./webhook');
-const { setFirstConnected, skipWarmup } = require('./antiban');
+const { setFirstConnected, skipWarmup, recordMessageReceived, recordKnownContact } = require('./antiban');
 
 const sessions = {};
 const msgRetryCounterCache = new NodeCache();
 // ADD userDevicesCache to prevent querying device lists unnecessarily (Anti-Ban)
-const userDevicesCache = new NodeCache();
+// TTL=300s (5min) and useClones=false matches Evolution API's production config
+const userDevicesCache = new NodeCache({ stdTTL: 300, useClones: false });
+
+// ─── Anti-Loop Protection ────────────────────────────────────────────────────
+// Prevents the bot from processing the same message twice or entering response loops
+const processedMessages = new NodeCache({ stdTTL: 120, checkperiod: 60 }); // 2-min TTL
+const chatCooldowns = new NodeCache({ stdTTL: 2, checkperiod: 5 });         // 2-sec per-chat cooldown
+
+// ─── Reconnection Backoff ────────────────────────────────────────────────────
+const retryCounters = {};  // { instanceId: retryCount }
+
+function getBackoffDelay(instanceId) {
+    const retries = retryCounters[instanceId] || 0;
+    // Exponential: 5s → 10s → 20s → 40s → 80s → max 300s (5 min)
+    const delay = Math.min(5000 * Math.pow(2, retries), 300000);
+    // Add jitter (±20%) to avoid thundering herd
+    const jitter = delay * (0.8 + Math.random() * 0.4);
+    retryCounters[instanceId] = retries + 1;
+    return Math.round(jitter);
+}
+
+// ─── Presence Schedule ───────────────────────────────────────────────────────
+// Simulates natural online/offline patterns to avoid 24/7 bot detection
+// Uses recursive setTimeout so each interval is DIFFERENT (unlike setInterval)
+const presenceTimers = {};
+
+function startPresenceSchedule(id, sock) {
+    // Clear any existing timer
+    stopPresenceSchedule(id);
+    
+    // Go available on connection
+    try { sock.sendPresenceUpdate('available'); } catch (_) {}
+    
+    // Recursive function: each cycle gets a DIFFERENT random delay
+    function scheduleNext() {
+        const delay = (300 + Math.random() * 180) * 1000; // 5-8 min (random each time)
+        presenceTimers[id] = setTimeout(async () => {
+            try {
+                const hour = new Date().getHours();
+                // "Sleep" hours (midnight to 6am) → stay unavailable
+                if (hour >= 0 && hour < 6) {
+                    await sock.sendPresenceUpdate('unavailable');
+                } else {
+                    // During "awake" hours, randomly toggle to simulate breaks
+                    const shouldBeOnline = Math.random() > 0.15; // 85% online
+                    await sock.sendPresenceUpdate(shouldBeOnline ? 'available' : 'unavailable');
+                }
+            } catch (_) {}
+            scheduleNext(); // Schedule next with NEW random delay
+        }, delay);
+    }
+    scheduleNext();
+}
+
+function stopPresenceSchedule(id) {
+    if (presenceTimers[id]) {
+        clearTimeout(presenceTimers[id]);
+        delete presenceTimers[id];
+    }
+}
 
 const logger = pino({ level: 'silent' });
 
@@ -59,7 +119,7 @@ const createSession = async (id) => {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
-        // Anti-ban & Session Stability configs (Enterprise-grade)
+        // ─── Anti-Ban & Session Stability (Enterprise-grade, Evolution API-proven) ───
         browser: ['Mac OS', 'Chrome', '125.0.0.0'], // Fingerprint as legitimate desktop Chrome
         markOnlineOnConnect: false, // Don't broadcast online status immediately to avoid spam flags
         syncFullHistory: false, // Prevent overloading the session socket on startup
@@ -68,7 +128,23 @@ const createSession = async (id) => {
         msgRetryCounterCache,
         userDevicesCache, // Essential to prevent requerying WhatsApp servers for keys every message
         defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 15000, // Send keep-alives to prevent WebSocket termination by ISP/WhatsApp
+        keepAliveIntervalMs: 30000, // 30s keep-alive (Evolution API standard — less aggressive than 15s)
+
+        // ─── Evolution API configs (battle-tested with thousands of instances) ───
+        emitOwnEvents: false, // Don't re-emit our own sent messages as events (prevents self-response loops)
+        retryRequestDelayMs: 350, // 350ms between failed request retries (prevents hammering WhatsApp servers)
+        maxMsgRetryCount: 4, // Max 4 decrypt retries per message (prevents infinite loops on corrupt msgs)
+        fireInitQueries: true, // Execute initial profile/contacts queries on connect (looks like real session)
+        connectTimeoutMs: 30000, // 30s connection timeout
+        qrTimeout: 45000, // 45s QR code timeout before regenerating
+        transactionOpts: { maxCommitRetries: 10, delayBetweenTriesMs: 3000 }, // Signal Protocol crypto retry config (prevents session corruption)
+        shouldIgnoreJid: (jid) => {
+            // Filter out newsletters and broadcasts at transport level (before our handler)
+            // This reduces processing load and prevents unnecessary interactions
+            const isNewsletter = jid?.endsWith('@newsletter');
+            const isBroadcast = jid === 'status@broadcast';
+            return isNewsletter || isBroadcast;
+        },
         getMessage: async (key) => {
             // Needed to prevent crashing on quoted messages WhatsApp forces us to decrypt
             return { conversation: '' };
@@ -106,6 +182,9 @@ const createSession = async (id) => {
             const reason = lastDisconnect?.error?.output?.statusCode;
             console.log(`[${id}] Connection closed. Reason: ${reason}`);
             
+            // Stop presence simulation
+            stopPresenceSchedule(id);
+            
             if (sessions[id]) {
                 sessions[id].status = 'disconnected';
             }
@@ -116,38 +195,80 @@ const createSession = async (id) => {
                     fs.rmSync(sessionDir, { recursive: true, force: true });
                 }
                 delete sessions[id];
+                delete retryCounters[id]; // Clean up
             }
             
             const instances = getInstances();
             if (instances[id]) {
-                console.log(`[${id}] Reconnecting (or generating new QR)...`);
-                setTimeout(() => createSession(id), 5000);
+                const delay = getBackoffDelay(id);
+                console.log(`[${id}] Reconnecting in ${Math.round(delay/1000)}s (attempt ${retryCounters[id]})...`);
+                setTimeout(() => createSession(id), delay);
             } else {
                 console.log(`[${id}] Instance removed from store. Stopping reconnection.`);
+                delete retryCounters[id];
             }
         } else if (connection === 'open') {
             console.log(`[${id}] Connection opened!`);
             sessions[id].status = 'authenticated';
             sessions[id].qr = null;
+            // Reset retry counter on successful connection
+            retryCounters[id] = 0;
             // Track first connection for warm-up protocol (new numbers)
             setFirstConnected(id);
+            // Start presence schedule (simulates natural online/offline)
+            startPresenceSchedule(id, sock);
         }
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         
+        // AUTO-READ: Mark incoming messages as "seen" (anti-ban: simulates real user behavior)
+        // Whapi recommends: "Send read confirmation ('seen') to appear as an active, real account"
+        const readKeys = messages
+            .filter(m => !m.key.fromMe && m.key.remoteJid !== 'status@broadcast')
+            .map(m => m.key);
+        if (readKeys.length > 0) {
+            try { await sock.readMessages(readKeys); } catch (_) {}
+        }
+        
         const instances = getInstances();
         let currentReceived = instances[id]?.messages_received || 0;
 
         for (const msg of messages) {
-            // PREVENT CRASH/BANS: Ignore incoming broadcasted statuses from other people.
-            // Downloading hundreds of candidates' video/picture statuses will stall the WebSocket and trigger bans
-            if (msg.key?.remoteJid === 'status@broadcast' && !msg.key?.fromMe) {
+            // ── Anti-Loop Protection ─────────────────────────────────────────
+            // 1. Skip if we already processed this exact message ID
+            const msgId = msg.key.id;
+            if (processedMessages.get(msgId)) {
                 continue;
             }
+            processedMessages.set(msgId, true);
+            
+            // 2. Skip our own outgoing messages (prevent self-response loops)
+            if (msg.key.fromMe) {
+                continue;
+            }
+            
+            // 3. Per-chat cooldown: if we just processed a msg from this chat <2s ago, skip
+            const chatId = msg.key.remoteJid;
+            if (chatCooldowns.get(chatId)) {
+                // Still process for metrics but don't fire webhook (prevents rapid-fire)
+                recordMessageReceived(id);
+                currentReceived += 1;
+                continue;
+            }
+            chatCooldowns.set(chatId, true);
+            // ─────────────────────────────────────────────────────────────────
 
             currentReceived += 1;
+            
+            // Anti-Ban v2: Track received messages and known contacts
+            recordMessageReceived(id);
+            // Track this sender as a known contact (not groups, not status)
+            const senderJid = msg.key.remoteJid;
+            if (senderJid && !senderJid.includes('@g.us') && senderJid !== 'status@broadcast') {
+                recordKnownContact(id, senderJid);
+            }
             
             // UltraMsg Drop-In Replacement Adapter
             let bodyText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || msg.message?.videoMessage?.caption || msg.message?.documentMessage?.caption || "";
@@ -190,7 +311,6 @@ const createSession = async (id) => {
                     });
                     
                     if (buffer) {
-                        const crypto = require('crypto');
                         const mediaDir = path.resolve(__dirname, '../data/media');
                         if (!fs.existsSync(mediaDir)) {
                             fs.mkdirSync(mediaDir, { recursive: true });
@@ -308,6 +428,10 @@ const createSession = async (id) => {
 };
 
 const deleteSession = async (id) => {
+    // Clean up presence schedule and retry counters to prevent memory leaks
+    stopPresenceSchedule(id);
+    delete retryCounters[id];
+    
     if (sessions[id]) {
         if (sessions[id].sock) {
             try {

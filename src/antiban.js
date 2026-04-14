@@ -1,19 +1,23 @@
 /**
- * ─── ANTI-BAN SHIELD ─────────────────────────────────────────────────────────
+ * ─── ANTI-BAN SHIELD v2 ──────────────────────────────────────────────────────
  * Enterprise-grade anti-detection engine for WhatsApp Gateway.
  * 
- * Implements 7 layers of protection:
+ * Implements 9 layers of protection:
  * 1. Humanizer (typing indicators + character-based delay)
  * 2. Rate Limiter (per-instance, per-hour, per-day)
  * 3. Smart Message Queue (FIFO with priority + jitter)
  * 4. Content Fingerprint Variation
- * 5. Health Monitor
+ * 5. Health Monitor + Response Rate Tracking
  * 6. Multi-Instance Aware (respects load balancer)
  * 7. Warm-Up Protocol (for new/reconnected numbers)
+ * 8. Risk Score Calculator (Whapi-inspired Safety Meter)
+ * 9. Known Contact Registry (persisted to disk)
  * ──────────────────────────────────────────────────────────────────────────────
  */
 
 const EventEmitter = require('events');
+const fs = require('fs');
+const path = require('path');
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -41,8 +45,16 @@ const DEFAULT_CONFIG = {
     longBreakMin: 10000,          // ...pause for exactly 10 seconds
     longBreakMax: 10000,
     
-    // Warm-up — DISABLED (all numbers treated as established)
-    warmupSchedule: [],
+    // Warm-up — progressive limits for new numbers
+    // Based on Whapi recommendation: start low, scale gradually over 3 weeks
+    warmupSchedule: [
+        { days: 1,  maxPerDay: 20 },    // Day 1: max 20 messages
+        { days: 3,  maxPerDay: 50 },    // Days 2-3: max 50
+        { days: 7,  maxPerDay: 100 },   // Days 4-7: max 100
+        { days: 14, maxPerDay: 300 },   // Week 2: max 300
+        { days: 21, maxPerDay: 500 },   // Week 3: max 500
+        // After day 21: unlimited (uses maxMessagesPerDay)
+    ],
     
     // Queue
     maxQueueSize: 1000,
@@ -58,11 +70,68 @@ const DEFAULT_CONFIG = {
 
 const instanceMetrics = {};
 
+// ─── Persistence: Known Contacts & Unique Recipients ─────────────────────────
+
+const CONTACTS_FILE = path.resolve(__dirname, '../data/antiban_contacts.json');
+
+function loadPersistedContacts() {
+    try {
+        if (fs.existsSync(CONTACTS_FILE)) {
+            const raw = JSON.parse(fs.readFileSync(CONTACTS_FILE, 'utf8'));
+            // Convert arrays back to Sets per instance
+            const result = {};
+            for (const [id, data] of Object.entries(raw)) {
+                result[id] = {
+                    knownContacts: new Set(data.knownContacts || []),
+                    uniqueRecipients: new Set(data.uniqueRecipients || []),
+                };
+            }
+            return result;
+        }
+    } catch (err) {
+        console.error('[AntiBan] Failed to load persisted contacts:', err.message);
+    }
+    return {};
+}
+
+function savePersistedContacts() {
+    try {
+        const serializable = {};
+        for (const [id, metrics] of Object.entries(instanceMetrics)) {
+            serializable[id] = {
+                knownContacts: Array.from(metrics.knownContacts || []),
+                uniqueRecipients: Array.from(metrics.uniqueRecipients || []),
+            };
+        }
+        const dir = path.dirname(CONTACTS_FILE);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(CONTACTS_FILE, JSON.stringify(serializable, null, 2));
+    } catch (err) {
+        console.error('[AntiBan] Failed to save persisted contacts:', err.message);
+    }
+}
+
+// Debounced save — writes at most once every 30 seconds
+let _saveTimer = null;
+function debouncedSave() {
+    if (_saveTimer) return;
+    _saveTimer = setTimeout(() => {
+        savePersistedContacts();
+        _saveTimer = null;
+    }, 30000);
+}
+
+// Load persisted data on startup
+const _persistedContacts = loadPersistedContacts();
+
 function getMetrics(instanceId) {
     if (!instanceMetrics[instanceId]) {
+        const persisted = _persistedContacts[instanceId];
         instanceMetrics[instanceId] = {
             sentThisHour: 0,
             sentToday: 0,
+            receivedThisHour: 0,
+            receivedToday: 0,
             hourStartedAt: Date.now(),
             dayStartedAt: Date.now(),
             totalSentLifetime: 0,
@@ -72,6 +141,9 @@ function getMetrics(instanceId) {
             recentMessages: [],        // Timestamps of last 100 messages for analysis
             queuedCount: 0,
             droppedCount: 0,
+            // Layer 8+9: Persisted contact data (restored from disk)
+            knownContacts: persisted?.knownContacts || new Set(),
+            uniqueRecipients: persisted?.uniqueRecipients || new Set(),
         };
     }
     return instanceMetrics[instanceId];
@@ -81,6 +153,7 @@ function resetHourlyIfNeeded(metrics) {
     const elapsed = Date.now() - metrics.hourStartedAt;
     if (elapsed >= 3600000) { // 1 hour
         metrics.sentThisHour = 0;
+        metrics.receivedThisHour = 0;
         metrics.hourStartedAt = Date.now();
         metrics.consecutiveCount = 0;
     }
@@ -90,6 +163,7 @@ function resetDailyIfNeeded(metrics) {
     const elapsed = Date.now() - metrics.dayStartedAt;
     if (elapsed >= 86400000) { // 24 hours
         metrics.sentToday = 0;
+        metrics.receivedToday = 0;
         metrics.dayStartedAt = Date.now();
     }
 }
@@ -208,7 +282,7 @@ function checkRateLimit(instanceId, config = DEFAULT_CONFIG) {
     return { allowed: true, reason: null, waitMs: 0 };
 }
 
-function recordMessageSent(instanceId) {
+function recordMessageSent(instanceId, recipientJid) {
     const metrics = getMetrics(instanceId);
     metrics.sentThisHour++;
     metrics.sentToday++;
@@ -219,6 +293,36 @@ function recordMessageSent(instanceId) {
     // Keep only last 100
     if (metrics.recentMessages.length > 100) {
         metrics.recentMessages.shift();
+    }
+    // Track unique recipients for contact coverage analysis
+    if (recipientJid) {
+        metrics.uniqueRecipients.add(recipientJid);
+        debouncedSave();
+    }
+}
+
+// ─── Layer 8: Response Rate Tracking ─────────────────────────────────────────
+
+function recordMessageReceived(instanceId) {
+    const metrics = getMetrics(instanceId);
+    metrics.receivedThisHour++;
+    metrics.receivedToday++;
+}
+
+// ─── Layer 9: Known Contact Registry ─────────────────────────────────────────
+
+/**
+ * Records a JID as a "known contact" — someone who has messaged us.
+ * This is critical for Whapi's riskFactorContacts metric:
+ * the more recipients that know us, the safer our account.
+ */
+function recordKnownContact(instanceId, jid) {
+    const metrics = getMetrics(instanceId);
+    const sizeBefore = metrics.knownContacts.size;
+    metrics.knownContacts.add(jid);
+    // Only trigger save if a new contact was added
+    if (metrics.knownContacts.size > sizeBefore) {
+        debouncedSave();
     }
 }
 
@@ -310,22 +414,42 @@ function getHealthReport(instanceId = null) {
         const recentCount = metrics.recentMessages.filter(ts => ts > tenMinsAgo).length;
         const msgsPerMinute = (recentCount / 10).toFixed(1);
         
+        // Response Rate calculation
+        const responseRate = metrics.sentToday > 0 
+            ? Math.round((metrics.receivedToday / metrics.sentToday) * 100)
+            : null;
+        const responseRateStatus = (() => {
+            if (metrics.sentToday < 10) return '⚪ Insufficient data';
+            if (responseRate >= 30) return '🟢 Healthy';
+            if (responseRate >= 15) return '🟡 Warning — try to increase engagement';
+            return '🔴 DANGER — reduce outbound messaging';
+        })();
+        
         report[id] = {
             status: hourlyPct >= 100 || dailyPct >= 100 ? '🔴 BLOCKED' :
                     hourlyPct >= 80 || dailyPct >= 80 ? '🟡 WARNING' : '🟢 HEALTHY',
             sentThisHour: metrics.sentThisHour,
+            receivedThisHour: metrics.receivedThisHour,
             maxPerHour: config.maxMessagesPerHour,
             hourlyUsage: `${hourlyPct}%`,
             hourResetsIn: `${Math.max(0, Math.round(hourRemainingMs / 60000))} min`,
             sentToday: metrics.sentToday,
+            receivedToday: metrics.receivedToday,
             maxPerDay: effectiveDailyLimit,
             dailyUsage: `${dailyPct}%`,
             dayResetsIn: `${Math.max(0, Math.round(dayRemainingMs / 60000))} min`,
+            responseRate: responseRate !== null ? `${responseRate}%` : 'N/A',
+            responseRateStatus,
             msgsPerMinute,
             totalLifetime: metrics.totalSentLifetime,
             consecutiveCount: metrics.consecutiveCount,
             queuedCount: metrics.queuedCount,
             droppedCount: metrics.droppedCount,
+            knownContactsCount: metrics.knownContacts.size,
+            uniqueRecipientsCount: metrics.uniqueRecipients.size,
+            contactCoverage: metrics.uniqueRecipients.size > 0
+                ? `${Math.round((metrics.knownContacts.size / metrics.uniqueRecipients.size) * 100)}%`
+                : 'N/A',
             warmup: warmupLimit !== null ? {
                 active: true,
                 currentLimit: warmupLimit,
@@ -483,8 +607,8 @@ class MessageQueue extends EventEmitter {
                     await humanizeAfter(job.sock, job.jid);
                 }
                 
-                // Record in metrics
-                recordMessageSent(this.instanceId);
+                // Record in metrics (pass recipient JID for contact tracking)
+                recordMessageSent(this.instanceId, job.jid);
                 
                 // Resolve the promise
                 job.resolve(msg);
@@ -583,6 +707,79 @@ function canSendNow(instanceId) {
     };
 }
 
+// ─── Layer 8: Risk Score Calculator (Whapi-inspired Safety Meter) ────────────
+
+/**
+ * Calculates a risk score (1-3) for an instance, inspired by Whapi's Activity Safety Meter.
+ * 
+ * Factors:
+ * - lifeTime: How long the number has been connected (days)
+ * - riskFactorChats: Response rate (ratio received/sent)
+ * - riskFactorContacts: % of recipients that are known contacts
+ * 
+ * Returns: { riskFactor: 1|2|3, lifeTime: 1|2|3, riskFactorChats: 1|2|3, riskFactorContacts: 1|2|3 }
+ *   3 = Good, 2 = Attention, 1 = Caution/Danger
+ */
+function calculateRiskScore(instanceId) {
+    const metrics = getMetrics(instanceId);
+    resetHourlyIfNeeded(metrics);
+    resetDailyIfNeeded(metrics);
+    
+    // Factor 1: Lifetime (days connected)
+    let lifeTime = 1; // Caution by default
+    if (metrics.firstConnectedAt) {
+        const days = (Date.now() - metrics.firstConnectedAt) / 86400000;
+        if (days >= 30) lifeTime = 3;       // 30+ days = Good
+        else if (days >= 7) lifeTime = 2;   // 7-30 days = Attention
+    }
+    
+    // Factor 2: Response Rate
+    let riskFactorChats = 1;
+    if (metrics.sentToday < 10) {
+        riskFactorChats = 3; // Not enough data = assume OK
+    } else {
+        const rate = (metrics.receivedToday / metrics.sentToday) * 100;
+        if (rate >= 30) riskFactorChats = 3;      // 30%+ = Good
+        else if (rate >= 15) riskFactorChats = 2;  // 15-30% = Attention
+    }
+    
+    // Factor 3: Known Contact Coverage
+    let riskFactorContacts = 2; // Default: Attention (no data)
+    if (metrics.uniqueRecipients.size > 0) {
+        const coverage = (metrics.knownContacts.size / metrics.uniqueRecipients.size) * 100;
+        if (coverage >= 50) riskFactorContacts = 3;      // 50%+ known = Good
+        else if (coverage >= 20) riskFactorContacts = 2;  // 20-50% = Attention
+        else riskFactorContacts = 1;                       // <20% = Danger
+    }
+    
+    // Overall: minimum of all factors (weakest link determines safety)
+    const riskFactor = Math.min(lifeTime, riskFactorChats, riskFactorContacts);
+    
+    return {
+        riskFactor,
+        riskLabel: riskFactor === 3 ? '🟢 SAFE' : riskFactor === 2 ? '🟡 ATTENTION' : '🔴 DANGER',
+        lifeTime,
+        lifeTimeLabel: lifeTime === 3 ? 'Good' : lifeTime === 2 ? 'Attention' : 'Caution',
+        riskFactorChats,
+        riskFactorChatsLabel: riskFactorChats === 3 ? 'Good' : riskFactorChats === 2 ? 'Attention' : 'Caution',
+        riskFactorContacts,
+        riskFactorContactsLabel: riskFactorContacts === 3 ? 'Good' : riskFactorContacts === 2 ? 'Attention' : 'Caution',
+        details: {
+            daysConnected: metrics.firstConnectedAt 
+                ? Math.round((Date.now() - metrics.firstConnectedAt) / 86400000)
+                : 0,
+            responseRate: metrics.sentToday > 0 
+                ? Math.round((metrics.receivedToday / metrics.sentToday) * 100) 
+                : null,
+            knownContactsCount: metrics.knownContacts.size,
+            uniqueRecipientsCount: metrics.uniqueRecipients.size,
+            contactCoverage: metrics.uniqueRecipients.size > 0
+                ? Math.round((metrics.knownContacts.size / metrics.uniqueRecipients.size) * 100)
+                : null,
+        }
+    };
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -598,11 +795,16 @@ module.exports = {
     checkRateLimit,
     recordMessageSent,
     
+    // Response Rate & Contact Tracking (v2)
+    recordMessageReceived,
+    recordKnownContact,
+    
     // Content protection
     fingerprintText,
     
-    // Health
+    // Health & Risk
     getHealthReport,
+    calculateRiskScore,
     getMetrics,
     
     // Warm-up
@@ -611,6 +813,9 @@ module.exports = {
     
     // Queue management
     getQueue,
+    
+    // Persistence
+    savePersistedContacts,
     
     // Config
     DEFAULT_CONFIG,

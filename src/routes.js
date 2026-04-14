@@ -2,7 +2,7 @@ const express = require('express');
 const { getInstances, updateInstance, deleteInstance, defaultSettings } = require('./store');
 const { createSession, getSessionState, getSessionQr, getSocket, deleteSession } = require('./whatsapp');
 const { v4: uuidv4 } = require('uuid');
-const { sendSafe, canSendNow, getHealthReport, getMetrics, skipWarmup, getQueue, humanize, humanizeAfter, fingerprintText } = require('./antiban');
+const { sendSafe, canSendNow, getHealthReport, calculateRiskScore, getMetrics, skipWarmup, getQueue, humanize, humanizeAfter, fingerprintText } = require('./antiban');
 
 const requireAuth = (req, res, next) => {
     let instanceId = req.params.instanceId;
@@ -1043,6 +1043,16 @@ const initRoutes = (app) => {
         }
         const report = getHealthReport(instanceId);
         res.json(report);
+    });
+
+    // Get risk score (Safety Meter) for specific instance
+    app.get('/antiban/risk/:instanceId', (req, res) => {
+        let instanceId = req.params.instanceId;
+        if (instanceId.startsWith('instance')) {
+            instanceId = instanceId.replace('instance', '');
+        }
+        const risk = calculateRiskScore(instanceId);
+        res.json(risk);
     });
 
     // Skip warm-up for an established number
