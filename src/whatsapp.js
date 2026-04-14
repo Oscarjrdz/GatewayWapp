@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const { getInstances, updateInstance } = require('./store');
 const { sendWebhook } = require('./webhook');
 const { setFirstConnected, skipWarmup, recordMessageReceived, recordKnownContact } = require('./antiban');
@@ -111,7 +112,22 @@ const createSession = async (id) => {
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
     const { version } = await fetchLatestBaileysVersion();
 
+    // ─── Residential Proxy Support ───────────────────────────────────────────
+    // Set PROXY_URL env var in Railway to route through your home IP
+    // Example: socks5://user:pass@your-home-ip:1080
+    let proxyOptions = {};
+    if (process.env.PROXY_URL) {
+        try {
+            const agent = new SocksProxyAgent(process.env.PROXY_URL);
+            proxyOptions = { agent, fetchAgent: agent };
+            console.log(`[${id}] Using proxy: ${process.env.PROXY_URL.replace(/\/\/.*@/, '//***@')}`);
+        } catch (err) {
+            console.error(`[${id}] Proxy config failed, connecting without proxy:`, err.message);
+        }
+    }
+
     const sock = makeWASocket({
+        ...proxyOptions, // Spread proxy agent if configured
         version,
         logger,
         printQRInTerminal: false,

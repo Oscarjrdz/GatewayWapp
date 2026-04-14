@@ -368,21 +368,53 @@ const ZERO_WIDTH_CHARS = [
  * Adds invisible fingerprint variations to text to prevent
  * WhatsApp from detecting identical mass messages.
  * The text looks exactly the same to humans but has a unique hash.
+ * 
+ * IMPORTANT: Only inserts at safe positions (word boundaries, after
+ * spaces/punctuation) to avoid corrupting multi-byte emoji codepoints.
  */
 function fingerprintText(text) {
     if (!text || typeof text !== 'string') return text;
     
-    // Insert 2-4 random zero-width chars at random positions
-    const numInserts = 2 + Math.floor(Math.random() * 3);
-    let modified = text;
+    // Collect safe insertion positions — boundaries between characters
+    // that won't break multi-byte emoji/surrogate pairs.
+    // We use Array.from() to correctly iterate over full Unicode codepoints
+    // (including emojis) instead of individual UTF-16 code units.
+    const chars = Array.from(text);
+    const safePositions = [];
     
-    for (let i = 0; i < numInserts; i++) {
-        const pos = Math.floor(Math.random() * modified.length);
-        const zwc = ZERO_WIDTH_CHARS[Math.floor(Math.random() * ZERO_WIDTH_CHARS.length)];
-        modified = modified.slice(0, pos) + zwc + modified.slice(pos);
+    for (let i = 0; i <= chars.length; i++) {
+        // Position 0 (start) and chars.length (end) are always safe
+        if (i === 0 || i === chars.length) {
+            safePositions.push(i);
+            continue;
+        }
+        const prevChar = chars[i - 1];
+        // Safe to insert after: spaces, newlines, punctuation, commas, periods, etc.
+        if (/[\s,.;:!?¡¿\-–—\n\r\t()[\]{}]/.test(prevChar)) {
+            safePositions.push(i);
+        }
     }
     
-    return modified;
+    // If very few safe positions found, just append at the end
+    if (safePositions.length < 2) {
+        const zwc = ZERO_WIDTH_CHARS[Math.floor(Math.random() * ZERO_WIDTH_CHARS.length)];
+        return text + zwc;
+    }
+    
+    // Insert 2-4 random zero-width chars at safe positions only
+    const numInserts = Math.min(2 + Math.floor(Math.random() * 3), safePositions.length);
+    
+    // Shuffle and pick positions (avoid duplicates)
+    const shuffled = safePositions.sort(() => Math.random() - 0.5);
+    const chosen = shuffled.slice(0, numInserts).sort((a, b) => b - a); // Sort descending to insert from end
+    
+    for (const pos of chosen) {
+        const zwc = ZERO_WIDTH_CHARS[Math.floor(Math.random() * ZERO_WIDTH_CHARS.length)];
+        // Rebuild using the codepoint array to keep emoji intact
+        chars.splice(pos, 0, zwc);
+    }
+    
+    return chars.join('');
 }
 
 // ─── Layer 5: Health Monitor ─────────────────────────────────────────────────
