@@ -29,21 +29,21 @@ const DEFAULT_CONFIG = {
     warningThreshold: 0.95,       // Only warn at 95% (which is ~9500 msgs, basically never)
     
     // Humanizer delays (milliseconds) — THE CORE PROTECTION
-    typingDelayPerChar: 25,       // ~25ms per character (fast but realistic)
-    typingMinDelay: 1000,         // Minimum 1 second of "typing"
-    typingMaxDelay: 3000,         // Maximum 3 seconds
+    typingDelayPerChar: 10,       // ~10ms per character (fast but realistic)
+    typingMinDelay: 400,          // Minimum 400ms of "typing"
+    typingMaxDelay: 1500,         // Maximum 1.5 seconds
     
     // Smart delays between messages — keeps it natural without being slow
-    baseDelayMin: 1500,           // 1.5 seconds minimum between messages
-    baseDelayMax: 4000,           // 4 seconds maximum between messages
+    baseDelayMin: 800,            // 0.8 seconds minimum between messages
+    baseDelayMax: 2000,           // 2 seconds maximum between messages
     
     // Fatigue simulation — fixed pauses
     burstPauseEvery: 20,          // Every 20 messages...
-    burstPauseMin: 5000,          // ...pause for exactly 5 seconds
-    burstPauseMax: 5000,
+    burstPauseMin: 2500,          // ...pause for exactly 2.5 seconds
+    burstPauseMax: 2500,
     longBreakEvery: 50,           // Every 50 messages...
-    longBreakMin: 10000,          // ...pause for exactly 10 seconds
-    longBreakMax: 10000,
+    longBreakMin: 5000,           // ...pause for exactly 5 seconds
+    longBreakMax: 5000,
     
     // Warm-up — progressive limits for new numbers
     // Based on Whapi recommendation: start low, scale gradually over 3 weeks
