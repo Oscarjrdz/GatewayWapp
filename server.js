@@ -6,8 +6,22 @@ const { initRoutes } = require('./src/routes');
 const { loadSessions } = require('./src/whatsapp');
 const { savePersistedContacts } = require('./src/antiban');
 const { flushNow } = require('./src/store');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
+
+// Real-Time Socket.io Implementation
+const FRONTEND_URL = process.env.FRONTEND_URL || '*';
+const io = new Server(server, {
+    cors: {
+        origin: true, // Allow all origins for the dashboard
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
+global.io = io;
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -27,7 +41,7 @@ initRoutes(app);
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, async () => {
+server.listen(PORT, async () => {
     console.log(`WhatsApp API Server running on port ${PORT}`);
     console.log(`Starting saved sessions...`);
     await loadSessions();

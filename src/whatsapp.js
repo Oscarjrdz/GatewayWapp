@@ -370,6 +370,9 @@ const createSession = async (id) => {
             }
 
             await sendWebhook(id, 'message_received', adapterPayload);
+            if (global.io) {
+                global.io.emit('whatsapp_message_upsert', adapterPayload);
+            }
         }
         
         updateInstance(id, { messages_received: currentReceived });
@@ -398,9 +401,15 @@ const createSession = async (id) => {
                     __raw: update
                 };
                 await sendWebhook(id, 'message_ack', ackPayload);
+                if (global.io) {
+                    global.io.emit('whatsapp_message_update', ackPayload);
+                }
             } else {
                 // Fallback for generic updates
                 await sendWebhook(id, 'message_update', update);
+                if (global.io) {
+                    global.io.emit('whatsapp_message_update', update);
+                }
             }
         }
     });
@@ -432,6 +441,9 @@ const createSession = async (id) => {
             
             console.log(`[${id}] WEBHOOK POST message_ack (View) for ID: ${rawFormatted.key.id} from: ${rawFormatted.key.participant}`);
             await sendWebhook(id, 'message_ack', ackPayload);
+            if (global.io) {
+                global.io.emit('whatsapp_message_update', ackPayload);
+            }
         }
     });
 
