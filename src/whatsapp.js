@@ -369,6 +369,7 @@ const createSession = async (id) => {
                 type: msgType,
                 fromMe: msg.key.fromMe || false,
                 timestamp: msg.messageTimestamp,
+                contextInfo: msg.message?.extendedTextMessage?.contextInfo || msg.message?.imageMessage?.contextInfo || msg.message?.videoMessage?.contextInfo,
                 __raw: msg
             };
 
