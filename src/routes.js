@@ -109,7 +109,7 @@ const initRoutes = (app) => {
 
     // Send Text Message (Anti-Ban Protected)
     app.post('/:instanceId/messages/chat', requireAuth, async (req, res) => {
-        const { to, body, priority } = req.body;
+        const { to, body, priority, referenceId, contextInfo } = req.body;
         
         const sock = getSocket(req.instanceId);
         if (!sock) return res.status(400).json({ error: 'Session not active' });
@@ -129,7 +129,20 @@ const initRoutes = (app) => {
 
             // Route through Anti-Ban Shield
             const isReply = priority === 'reply';
-            const msg = await sendSafe(req.instanceId, sock, jid, { text: body || '' }, { isReply });
+            const msgContent = { text: body || '' };
+            
+            if (contextInfo) {
+                msgContent.contextInfo = contextInfo;
+            } else if (referenceId) {
+                // Retrocompatibility for UltraMsg's referenceId style
+                msgContent.contextInfo = {
+                    stanzaId: referenceId,
+                    participant: jid,
+                    quotedMessage: { conversation: '' }
+                };
+            }
+
+            const msg = await sendSafe(req.instanceId, sock, jid, msgContent, { isReply });
             
             // Increment Sent
             const currentSent = req.instance.messages_sent || 0;

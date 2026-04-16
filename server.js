@@ -75,3 +75,8 @@ process.on('uncaughtException', (err) => {
     gracefulShutdown('uncaughtException');
 });
 
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[Server] Unhandled Promise Rejection:', reason);
+    // Note: We don't forcefully exit here to prevent one bad promise from killing the whole gateway
+});

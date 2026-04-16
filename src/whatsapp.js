@@ -136,7 +136,7 @@ const createSession = async (id) => {
             keys: makeCacheableSignalKeyStore(state.keys, logger),
         },
         // ─── Anti-Ban & Session Stability (Enterprise-grade, Evolution API-proven) ───
-        browser: ['Mac OS', 'Chrome', '125.0.0.0'], // Fingerprint as legitimate desktop Chrome
+        browser: ['Mac OS', 'Chrome', '133.0.0.0'], // Fingerprint as legitimate desktop Chrome
         markOnlineOnConnect: false, // Don't broadcast online status immediately to avoid spam flags
         syncFullHistory: false, // Prevent overloading the session socket on startup
         receivePendingRequests: false, // Delay heavy processing
@@ -344,7 +344,7 @@ const createSession = async (id) => {
                         fs.writeFileSync(path.join(mediaDir, fileName), buffer);
                         
                         // URL pública inyectada
-                        const serverUrl = 'https://gatewaywapp-production.up.railway.app';
+                        const serverUrl = process.env.SERVER_URL || 'https://gatewaywapp-production.up.railway.app';
                         mediaUrl = `${serverUrl}/media/${fileName}`;
                     }
                 } catch (err) {
