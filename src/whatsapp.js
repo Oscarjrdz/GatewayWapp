@@ -371,7 +371,11 @@ const createSession = async (id) => {
 
             await sendWebhook(id, 'message_received', adapterPayload);
             if (global.io) {
-                global.io.emit('whatsapp_message_upsert', adapterPayload);
+                global.io.emit('whatsapp_message_upsert', {
+                    event_type: 'message_received',
+                    instanceId: id,
+                    data: adapterPayload
+                });
             }
         }
         
@@ -402,13 +406,21 @@ const createSession = async (id) => {
                 };
                 await sendWebhook(id, 'message_ack', ackPayload);
                 if (global.io) {
-                    global.io.emit('whatsapp_message_update', ackPayload);
+                    global.io.emit('whatsapp_message_update', {
+                        event_type: 'message_ack',
+                        instanceId: id,
+                        data: ackPayload
+                    });
                 }
             } else {
                 // Fallback for generic updates
                 await sendWebhook(id, 'message_update', update);
                 if (global.io) {
-                    global.io.emit('whatsapp_message_update', update);
+                    global.io.emit('whatsapp_message_update', {
+                        event_type: 'message_update',
+                        instanceId: id,
+                        data: update
+                    });
                 }
             }
         }
@@ -442,7 +454,11 @@ const createSession = async (id) => {
             console.log(`[${id}] WEBHOOK POST message_ack (View) for ID: ${rawFormatted.key.id} from: ${rawFormatted.key.participant}`);
             await sendWebhook(id, 'message_ack', ackPayload);
             if (global.io) {
-                global.io.emit('whatsapp_message_update', ackPayload);
+                global.io.emit('whatsapp_message_update', {
+                    event_type: 'message_ack',
+                    instanceId: id,
+                    data: ackPayload
+                });
             }
         }
     });
