@@ -294,6 +294,7 @@ const createSession = async (id) => {
             else if (msg.message?.audioMessage) msgType = "audio";
             else if (msg.message?.videoMessage) msgType = "video";
             else if (msg.message?.stickerMessage) msgType = "sticker";
+            else if (msg.message?.reactionMessage) msgType = "reaction";
 
             // RESOLVER PROBLEMA DE @LID (Solución Definitiva usando llave interna de Multi-Device)
             let fromCus = "";
@@ -319,7 +320,8 @@ const createSession = async (id) => {
 
             // AUTO-DESCARGA Y PUBLICACIÓN MULTIMEDIA CRIPTOGRÁFICA (Issue 2)
             let mediaUrl = undefined;
-            if (msgType !== "chat" && msgType !== "sticker") {
+            let mediaData = undefined;
+            if (msgType !== "chat" && msgType !== "reaction") {
                 try {
                     const buffer = await downloadMediaMessage(msg, 'buffer', { }, { 
                         logger,
@@ -327,28 +329,33 @@ const createSession = async (id) => {
                     });
                     
                     if (buffer) {
-                        const mediaDir = path.resolve(__dirname, '../data/media');
-                        if (!fs.existsSync(mediaDir)) {
-                            fs.mkdirSync(mediaDir, { recursive: true });
-                        }
-                        
-                        let ext = "bin";
-                        const mime = msg.message[`${msgType}Message`]?.mimetype || "";
-                        if (mime.includes('jpeg') || mime.includes('jpg')) ext = 'jpg';
-                        else if (mime.includes('png')) ext = 'png';
-                        else if (mime.includes('pdf')) ext = 'pdf';
-                        else if (mime.includes('mp4')) ext = 'mp4';
-                        else if (mime.includes('ogg')) ext = 'ogg';
+                        if (msgType === "sticker") {
+                            const mime = msg.message?.stickerMessage?.mimetype || 'image/webp';
+                            mediaData = `data:${mime};base64,${buffer.toString('base64')}`;
+                        } else {
+                            const mediaDir = path.resolve(__dirname, '../data/media');
+                            if (!fs.existsSync(mediaDir)) {
+                                fs.mkdirSync(mediaDir, { recursive: true });
+                            }
+                            
+                            let ext = "bin";
+                            const mime = msg.message[`${msgType}Message`]?.mimetype || "";
+                            if (mime.includes('jpeg') || mime.includes('jpg')) ext = 'jpg';
+                            else if (mime.includes('png')) ext = 'png';
+                            else if (mime.includes('pdf')) ext = 'pdf';
+                            else if (mime.includes('mp4')) ext = 'mp4';
+                            else if (mime.includes('ogg')) ext = 'ogg';
 
-                        const fileName = `${crypto.randomUUID()}.${ext}`;
-                        fs.writeFileSync(path.join(mediaDir, fileName), buffer);
-                        
-                        // URL pública inyectada
-                        const serverUrl = process.env.SERVER_URL || 'https://gatewaywapp-production.up.railway.app';
-                        mediaUrl = `${serverUrl}/media/${fileName}`;
+                            const fileName = `${crypto.randomUUID()}.${ext}`;
+                            fs.writeFileSync(path.join(mediaDir, fileName), buffer);
+                            
+                            // URL pública inyectada
+                            const serverUrl = process.env.SERVER_URL || 'https://gatewaywapp-production.up.railway.app';
+                            mediaUrl = `${serverUrl}/media/${fileName}`;
+                        }
                     }
                 } catch (err) {
-                    console.error(`[${id}] Failed to decrypt or download media: `, err.message);
+                    console.error(`[${id}] Failed to decrypt or download media for ${msgType}: `, err.message);
                 }
             }
 
@@ -367,6 +374,15 @@ const createSession = async (id) => {
 
             if (mediaUrl) {
                 adapterPayload.media = mediaUrl;
+            } else if (mediaData) {
+                adapterPayload.media = mediaData;
+            }
+
+            if (msgType === "reaction" && msg.message?.reactionMessage) {
+                adapterPayload.reaction = {
+                    text: msg.message.reactionMessage.text || "",
+                    stanzaId: msg.message.reactionMessage.key.id
+                };
             }
 
             await sendWebhook(id, 'message_received', adapterPayload);
