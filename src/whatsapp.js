@@ -95,7 +95,11 @@ const loadSessions = async () => {
     for (const id of Object.keys(instances)) {
         // Existing sessions are established numbers — skip warm-up
         skipWarmup(id);
-        await createSession(id);
+        try {
+            await createSession(id);
+        } catch (err) {
+            console.error(`[${id}] Failed to create session on startup (will retry via reconnect):`, err.message);
+        }
     }
 };
 

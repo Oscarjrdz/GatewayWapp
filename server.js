@@ -85,12 +85,12 @@ function gracefulShutdown(signal) {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
-    console.error('[Server] Uncaught exception:', err.message);
-    gracefulShutdown('uncaughtException');
+    console.error('[Server] Uncaught exception:', err.message, err.stack);
+    // DO NOT call process.exit() here — a single bad connection (e.g. dead proxy)
+    // should never take down the entire API server. Log and continue.
 });
-
 
 process.on('unhandledRejection', (reason) => {
     console.error('[Server] Unhandled Promise Rejection:', reason);
-    // Note: We don't forcefully exit here to prevent one bad promise from killing the whole gateway
+    // DO NOT exit — one bad promise should not kill the whole gateway
 });
