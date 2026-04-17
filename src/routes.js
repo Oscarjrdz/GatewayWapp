@@ -49,6 +49,43 @@ const initRoutes = (app) => {
         res.json({ instance_id: `instance${id}`, token });
     });
 
+    // Get System/Network Info (Proxy Details)
+    app.get('/system/info', async (req, res) => {
+        try {
+            const axios = require('axios');
+            const { SocksProxyAgent } = require('socks-proxy-agent');
+            let options = { timeout: 10000 };
+            const proxyUrl = process.env.PROXY_URL;
+            if (proxyUrl) {
+                const agent = new SocksProxyAgent(proxyUrl);
+                options.httpAgent = agent;
+                options.httpsAgent = agent;
+            }
+            // ip-api.com is an open JSON IP lookup API
+            const response = await axios.get('http://ip-api.com/json', options);
+            res.json({
+                success: true,
+                using_proxy: !!proxyUrl,
+                proxy_url: proxyUrl ? proxyUrl.replace(/\/\/[^@]*@/, '//***@') : null,
+                network: {
+                    ip: response.data.query,
+                    country: response.data.country,
+                    countryCode: response.data.countryCode,
+                    city: response.data.city,
+                    isp: response.data.isp,
+                    org: response.data.org
+                }
+            });
+        } catch (err) {
+            res.json({
+                success: false,
+                using_proxy: !!process.env.PROXY_URL,
+                error: 'Fallo al resolver IP externa',
+                details: err.message
+            });
+        }
+    });
+
     // List all instances (Personal Dashboard Only)
     app.get('/instances', (req, res) => {
         const instances = getInstances();
