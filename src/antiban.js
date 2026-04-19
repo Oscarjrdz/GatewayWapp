@@ -18,6 +18,7 @@
 const EventEmitter = require('events');
 const fs = require('fs');
 const path = require('path');
+const { isManualPresence } = require('./store');
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -195,7 +196,8 @@ function randomDelay(min, max) {
  * 3. Returns control to caller to send the actual message
  * 4. Sends "paused" after message is sent
  */
-async function humanize(sock, jid, messageText, config = DEFAULT_CONFIG) {
+async function humanize(instanceId, sock, jid, messageText, config = DEFAULT_CONFIG) {
+    if (isManualPresence(instanceId)) return;
     try {
         // Calculate typing duration based on message length
         const textLen = (messageText || '').length;
@@ -219,7 +221,8 @@ async function humanize(sock, jid, messageText, config = DEFAULT_CONFIG) {
     }
 }
 
-async function humanizeAfter(sock, jid) {
+async function humanizeAfter(instanceId, sock, jid) {
+    if (isManualPresence(instanceId)) return;
     try {
         // Brief pause before stopping typing indicator
         await new Promise(r => setTimeout(r, randomDelay(200, 500)));
@@ -642,7 +645,7 @@ class MessageQueue extends EventEmitter {
                 
                 // Humanize: typing indicator + delay
                 if (textContent && job.sock) {
-                    await humanize(job.sock, job.jid, textContent, this.config);
+                    await humanize(this.instanceId, job.sock, job.jid, textContent, this.config);
                 }
                 
                 // Apply content fingerprinting
@@ -658,7 +661,7 @@ class MessageQueue extends EventEmitter {
                 
                 // Post-send humanization
                 if (textContent) {
-                    await humanizeAfter(job.sock, job.jid);
+                    await humanizeAfter(this.instanceId, job.sock, job.jid);
                 }
                 
                 // Record in metrics (pass recipient JID for contact tracking)

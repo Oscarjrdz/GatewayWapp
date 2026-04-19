@@ -3,6 +3,24 @@ const path = require('path');
 
 const dataFile = path.resolve(__dirname, '../data/instances.json');
 
+// ─── Manual Presence Mode ────────────────────────────────────────────────────
+// Instances in this set will NOT have auto-read or auto-composing from the Gateway.
+// Candidatic's "Door" system handles read receipts and typing indicators manually
+// via the API endpoints to simulate human-like timing patterns.
+const MANUAL_PRESENCE_INSTANCES = new Set([
+    '9056d7014d',  // Candidatic – Instancia Principal
+    '6154bb3156',  // Candidatic 2
+    'a2c8cea97a',  // Candidatic 3
+]);
+
+function isManualPresence(instanceId) {
+    // Strip 'instance' prefix if present
+    const cleanId = instanceId?.startsWith('instance') 
+        ? instanceId.replace('instance', '') 
+        : instanceId;
+    return MANUAL_PRESENCE_INSTANCES.has(cleanId);
+}
+
 const defaultSettings = {
     webhook_url: '',
     webhook_message_received: false,
@@ -99,6 +117,8 @@ module.exports = {
     updateInstance,
     deleteInstance,
     defaultSettings,
-    flushNow
+    flushNow,
+    isManualPresence,
+    MANUAL_PRESENCE_INSTANCES
 };
 

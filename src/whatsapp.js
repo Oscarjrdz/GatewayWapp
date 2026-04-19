@@ -6,7 +6,7 @@ const fs = require('fs');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
 const { SocksProxyAgent } = require('socks-proxy-agent');
-const { getInstances, updateInstance } = require('./store');
+const { getInstances, updateInstance, isManualPresence } = require('./store');
 const { sendWebhook } = require('./webhook');
 const { setFirstConnected, skipWarmup, recordMessageReceived, recordKnownContact } = require('./antiban');
 
@@ -245,11 +245,14 @@ const createSession = async (id) => {
         
         // AUTO-READ: Mark incoming messages as "seen" (anti-ban: simulates real user behavior)
         // Whapi recommends: "Send read confirmation ('seen') to appear as an active, real account"
-        const readKeys = messages
-            .filter(m => !m.key.fromMe && m.key.remoteJid !== 'status@broadcast')
-            .map(m => m.key);
-        if (readKeys.length > 0) {
-            try { await sock.readMessages(readKeys); } catch (_) {}
+        // EXCEPTION: Manual presence instances (Candidatic Door) handle read receipts themselves
+        if (!isManualPresence(id)) {
+            const readKeys = messages
+                .filter(m => !m.key.fromMe && m.key.remoteJid !== 'status@broadcast')
+                .map(m => m.key);
+            if (readKeys.length > 0) {
+                try { await sock.readMessages(readKeys); } catch (_) {}
+            }
         }
         
         const instances = getInstances();
