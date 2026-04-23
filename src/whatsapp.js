@@ -487,6 +487,22 @@ const createSession = async (id) => {
         }
     });
 
+    sock.ev.on('presence.update', async (update) => {
+        const presencePayload = {
+            id: update.id,
+            presences: update.presences,
+            __raw: update
+        };
+        await sendWebhook(id, 'presence_update', presencePayload);
+        if (global.io) {
+            global.io.emit('whatsapp_presence_update', {
+                event_type: 'presence_update',
+                instanceId: id,
+                data: presencePayload
+            });
+        }
+    });
+
     const instanceInfo = getInstances()[id];
     if (instanceInfo) {
         sessions[id].token = instanceInfo.token;
