@@ -905,6 +905,26 @@ const initRoutes = (app) => {
         }
     });
 
+    // Get Order Details (individual products in a cart order)
+    app.get('/:instanceId/order/:orderId', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const { orderId } = req.params;
+            const token = req.query.orderToken || req.query.order_token || '';
+
+            console.log(`[Order][GET] Fetching order details for orderId: ${orderId}`);
+            const details = await sock.getOrderDetails(orderId, token);
+            console.log(`[Order][GET] Got ${details.products?.length || 0} products`);
+
+            res.json({ success: true, order: details });
+        } catch (err) {
+            console.error(`[Order][GET] Error:`, err.message);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // ────────────────────────────────────────────────────────────────────────────
 
     // ─── Broadcast / Lista de Difusión (Anti-Ban Protected) ──────────────────────
