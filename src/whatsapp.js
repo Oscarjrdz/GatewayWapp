@@ -296,7 +296,24 @@ const createSession = async (id) => {
             // UltraMsg Drop-In Replacement Adapter
             let bodyText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage?.caption || msg.message?.videoMessage?.caption || msg.message?.documentMessage?.caption || "";
             let msgType = "chat";
-            if (msg.message?.imageMessage) msgType = "image";
+            let orderData = undefined;
+            if (msg.message?.orderMessage) {
+                msgType = "order";
+                const om = msg.message.orderMessage;
+                bodyText = om.message || `Pedido de ${om.itemCount || 0} producto(s)`;
+                orderData = {
+                    orderId: om.orderId || '',
+                    itemCount: om.itemCount || 0,
+                    status: om.status || 'INQUIRY',
+                    surface: om.surface || 'CATALOG',
+                    message: om.message || '',
+                    orderTitle: om.orderTitle || '',
+                    sellerJid: om.sellerJid || '',
+                    token: om.token || '',
+                    totalAmount1000: om.totalAmount1000 || 0,
+                    totalCurrencyCode: om.totalCurrencyCode || 'MXN'
+                };
+            } else if (msg.message?.imageMessage) msgType = "image";
             else if (msg.message?.documentMessage) msgType = "document";
             else if (msg.message?.audioMessage) msgType = "audio";
             else if (msg.message?.videoMessage) msgType = "video";
@@ -391,6 +408,10 @@ const createSession = async (id) => {
                     text: msg.message.reactionMessage.text || "",
                     stanzaId: msg.message.reactionMessage.key.id
                 };
+            }
+
+            if (msgType === "order" && orderData) {
+                adapterPayload.order = orderData;
             }
 
             await sendWebhook(id, 'message_received', adapterPayload);
