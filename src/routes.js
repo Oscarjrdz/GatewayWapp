@@ -761,6 +761,125 @@ const initRoutes = (app) => {
 
     // ────────────────────────────────────────────────────────────────────────────
 
+    // ─── WhatsApp Business Catalog ──────────────────────────────────────────────
+
+    // Get Catalog (own catalog or from another business number)
+    app.get('/:instanceId/catalog', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            // Default: own catalog. Pass ?jid=5215512345678@s.whatsapp.net for another business
+            const jid = req.query.jid || sock.user.id;
+            const limit = parseInt(req.query.limit) || 100;
+            const cursor = req.query.cursor || undefined;
+
+            const result = await sock.getCatalog({ jid, limit, cursor });
+
+            res.json({
+                success: true,
+                jid,
+                count: result.products.length,
+                nextPageCursor: result.nextPageCursor || null,
+                products: result.products
+            });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Get a specific product by ID
+    app.get('/:instanceId/catalog/:productId', requireAuth, async (req, res) => {
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const jid = req.query.jid || sock.user.id;
+            const { productId } = req.params;
+
+            const result = await sock.getCatalog({ jid, limit: 100 });
+            const product = result.products.find(p => p.id === productId);
+
+            if (!product) return res.status(404).json({ error: 'Product not found in catalog' });
+
+            res.json({ success: true, product });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Create a new product in your catalog
+    app.post('/:instanceId/catalog', requireAuth, async (req, res) => {
+        const { name, description, price, currency, images, retailerId, url, isHidden } = req.body;
+        if (!name) return res.status(400).json({ error: 'name is required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const createPayload = {
+                name,
+                description: description || '',
+                price: price || 0,
+                currencyCode: currency || 'MXN',
+                images: (images || []).map(img => ({ url: img })),
+                retailerId: retailerId || undefined,
+                url: url || undefined,
+                isHidden: isHidden || false
+            };
+
+            const product = await sock.productCreate(createPayload);
+            res.json({ success: true, product });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Update an existing product
+    app.patch('/:instanceId/catalog/:productId', requireAuth, async (req, res) => {
+        const { name, description, price, currency, images, retailerId, url, isHidden } = req.body;
+        const { productId } = req.params;
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const updatePayload = {};
+            if (name !== undefined) updatePayload.name = name;
+            if (description !== undefined) updatePayload.description = description;
+            if (price !== undefined) updatePayload.price = price;
+            if (currency !== undefined) updatePayload.currencyCode = currency;
+            if (images !== undefined) updatePayload.images = images.map(img => ({ url: img }));
+            if (retailerId !== undefined) updatePayload.retailerId = retailerId;
+            if (url !== undefined) updatePayload.url = url;
+            if (isHidden !== undefined) updatePayload.isHidden = isHidden;
+
+            const product = await sock.productUpdate(productId, updatePayload);
+            res.json({ success: true, product });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Delete products by IDs
+    app.delete('/:instanceId/catalog', requireAuth, async (req, res) => {
+        const { productIds } = req.body;
+        if (!productIds || !Array.isArray(productIds) || productIds.length === 0)
+            return res.status(400).json({ error: 'productIds[] array is required' });
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            const result = await sock.productDelete(productIds);
+            res.json({ success: true, deleted: result.deleted });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ────────────────────────────────────────────────────────────────────────────
+
     // ─── Broadcast / Lista de Difusión (Anti-Ban Protected) ──────────────────────
 
     // Send broadcast message to multiple numbers (routed through Anti-Ban queue)
