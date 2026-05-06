@@ -763,18 +763,29 @@ const initRoutes = (app) => {
 
     // ─── WhatsApp Business Catalog ──────────────────────────────────────────────
 
+    // Helper: normalize JID for catalog (strip multi-device :N suffix)
+    const catalogJid = (sock, overrideJid) => {
+        if (overrideJid) return overrideJid;
+        // sock.user.id = "5218126001944:3@s.whatsapp.net" → "5218126001944@s.whatsapp.net"
+        const raw = sock.user.id;
+        return raw.replace(/:\d+@/, '@');
+    };
+
     // Get Catalog (own catalog or from another business number)
     app.get('/:instanceId/catalog', requireAuth, async (req, res) => {
         const sock = getSocket(req.instanceId);
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
-            // Default: own catalog. Pass ?jid=5215512345678@s.whatsapp.net for another business
-            const jid = req.query.jid || sock.user.id;
+            const jid = catalogJid(sock, req.query.jid);
             const limit = parseInt(req.query.limit) || 100;
             const cursor = req.query.cursor || undefined;
 
+            console.log(`[Catalog][GET] Fetching catalog for JID: ${jid} (raw: ${sock.user.id})`);
+
             const result = await sock.getCatalog({ jid, limit, cursor });
+
+            console.log(`[Catalog][GET] Got ${result.products.length} products`);
 
             res.json({
                 success: true,
@@ -784,6 +795,7 @@ const initRoutes = (app) => {
                 products: result.products
             });
         } catch (err) {
+            console.error(`[Catalog][GET] Error:`, err.message);
             res.status(500).json({ error: err.message });
         }
     });
@@ -794,7 +806,7 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
-            const jid = req.query.jid || sock.user.id;
+            const jid = catalogJid(sock, req.query.jid);
             const { productId } = req.params;
 
             const result = await sock.getCatalog({ jid, limit: 100 });
@@ -828,10 +840,21 @@ const initRoutes = (app) => {
                 isHidden: isHidden || false
             };
 
+            console.log(`[Catalog][CREATE] Creating product: ${name}`);
             const product = await sock.productCreate(createPayload);
+            console.log(`[Catalog][CREATE] Product created:`, product?.id || 'no id');
             res.json({ success: true, product });
         } catch (err) {
-            res.status(500).json({ error: err.message });
+            console.error(`[Catalog][CREATE] Error:`, err.message, err.stack?.split('\n').slice(0, 3).join(' | '));
+            // If Baileys crashes parsing the response, the product may still have been created
+            if (err.message.includes("Cannot read properties of undefined")) {
+                res.status(500).json({
+                    error: 'El producto pudo haberse creado pero WhatsApp no confirmó correctamente. Recarga el catálogo.',
+                    baileys_error: err.message
+                });
+            } else {
+                res.status(500).json({ error: err.message });
+            }
         }
     });
 
@@ -854,9 +877,11 @@ const initRoutes = (app) => {
             if (url !== undefined) updatePayload.url = url;
             if (isHidden !== undefined) updatePayload.isHidden = isHidden;
 
+            console.log(`[Catalog][UPDATE] Updating product ${productId}`);
             const product = await sock.productUpdate(productId, updatePayload);
             res.json({ success: true, product });
         } catch (err) {
+            console.error(`[Catalog][UPDATE] Error:`, err.message);
             res.status(500).json({ error: err.message });
         }
     });
@@ -871,9 +896,11 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
+            console.log(`[Catalog][DELETE] Deleting ${productIds.length} products`);
             const result = await sock.productDelete(productIds);
             res.json({ success: true, deleted: result.deleted });
         } catch (err) {
+            console.error(`[Catalog][DELETE] Error:`, err.message);
             res.status(500).json({ error: err.message });
         }
     });
