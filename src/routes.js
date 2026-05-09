@@ -1,6 +1,6 @@
 const express = require('express');
 const { getInstances, updateInstance, deleteInstance, defaultSettings } = require('./store');
-const { createSession, getSessionState, getSessionQr, getSocket, deleteSession } = require('./whatsapp');
+const { createSession, getSessionState, getSessionQr, getSocket, deleteSession, forceReconnect } = require('./whatsapp');
 const { v4: uuidv4 } = require('uuid');
 const { sendSafe, canSendNow, getHealthReport, calculateRiskScore, getMetrics, skipWarmup, getQueue, humanize, humanizeAfter, fingerprintText } = require('./antiban');
 
@@ -134,11 +134,17 @@ const initRoutes = (app) => {
         res.json({ success: true, message: 'Instance deleted' });
     });
 
-    // Reconnect
+    // Reconnect (supports ?force=true or body { force: true } to wipe credentials)
     app.post('/:instanceId/reconnect', requireAuth, async (req, res) => {
         try {
-            await createSession(req.instanceId);
-            res.json({ success: true, message: 'Reconnection triggered' });
+            const force = req.body?.force === true || req.query?.force === 'true';
+            if (force) {
+                await forceReconnect(req.instanceId);
+                res.json({ success: true, message: 'Force reconnection triggered — check /qr for the new QR code' });
+            } else {
+                await createSession(req.instanceId);
+                res.json({ success: true, message: 'Reconnection triggered' });
+            }
         } catch (err) {
             res.status(500).json({ error: err.message });
         }

@@ -105,7 +105,19 @@ const loadSessions = async () => {
 
 const createSession = async (id) => {
     if (sessions[id] && sessions[id].status !== 'disconnected') {
-        return;
+        // If session has been stuck in 'loading' for > 60s, treat as dead
+        const stuckThreshold = 60000;
+        if (sessions[id].status === 'loading' && sessions[id]._loadingSince) {
+            if (Date.now() - sessions[id]._loadingSince > stuckThreshold) {
+                console.log(`[${id}] Session stuck in 'loading' for >${stuckThreshold/1000}s. Killing stale session.`);
+                try { sessions[id].sock?.end(undefined); } catch (_) {}
+                sessions[id].status = 'disconnected';
+            } else {
+                return; // Still within grace period
+            }
+        } else {
+            return;
+        }
     }
 
     const sessionDir = path.resolve(__dirname, `../data/sessions/${id}`);
@@ -185,7 +197,7 @@ const createSession = async (id) => {
         }
     });
 
-    sessions[id] = { sock, status: 'loading', qr: null, credsPath: sessionDir };
+    sessions[id] = { sock, status: 'loading', qr: null, credsPath: sessionDir, _loadingSince: Date.now() };
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -558,6 +570,34 @@ const deleteSession = async (id) => {
     }
 };
 
+// Force-reconnect: wipes credentials and forces a fresh QR code
+const forceReconnect = async (id) => {
+    console.log(`[${id}] FORCE RECONNECT: Wiping session to generate fresh QR...`);
+    
+    // 1. Stop presence and backoff timers
+    stopPresenceSchedule(id);
+    delete retryCounters[id];
+    
+    // 2. Kill existing socket (without calling logout — we want to keep the instance)
+    if (sessions[id]) {
+        if (sessions[id].sock) {
+            try { sessions[id].sock.end(undefined); } catch (_) {}
+        }
+        delete sessions[id];
+    }
+    
+    // 3. Delete session credential files to force QR generation
+    const sessionDir = path.resolve(__dirname, `../data/sessions/${id}`);
+    if (fs.existsSync(sessionDir)) {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        console.log(`[${id}] Session files deleted: ${sessionDir}`);
+    }
+    
+    // 4. Create fresh session (will generate QR since no creds exist)
+    await createSession(id);
+    console.log(`[${id}] Fresh session created. QR should be available now.`);
+};
+
 const formatJid = (number) => {
     if (!number) return '';
     let numStr = number.toString();
@@ -573,6 +613,7 @@ module.exports = {
     loadSessions,
     createSession,
     deleteSession,
+    forceReconnect,
     getSessionState,
     getSessionQr,
     getSocket,
