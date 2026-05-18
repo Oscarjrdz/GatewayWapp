@@ -35,41 +35,39 @@ function getBackoffDelay(instanceId) {
 
 // ─── Presence Schedule ───────────────────────────────────────────────────────
 // Simulates natural online/offline patterns to avoid 24/7 bot detection
-// Uses recursive setTimeout so each interval is DIFFERENT (unlike setInterval)
-const presenceTimers = {};
+// ─── Human Activity Auto-Offline ─────────────────────────────────────────────
+// Goes online when human sends a message, auto-offline after 5 min idle
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const activityTimers = {};
 
-function startPresenceSchedule(id, sock) {
-    // Clear any existing timer
-    stopPresenceSchedule(id);
+function markHumanActive(instanceId) {
+    const sock = sessions[instanceId]?.sock;
+    if (!sock) return;
     
-    // Go available on connection
+    // Go online
     try { sock.sendPresenceUpdate('available'); } catch (_) {}
     
-    // Recursive function: each cycle gets a DIFFERENT random delay
-    function scheduleNext() {
-        const delay = (300 + Math.random() * 180) * 1000; // 5-8 min (random each time)
-        presenceTimers[id] = setTimeout(async () => {
-            try {
-                const hour = new Date().getHours();
-                // "Sleep" hours (midnight to 6am) → stay unavailable
-                if (hour >= 0 && hour < 6) {
-                    await sock.sendPresenceUpdate('unavailable');
-                } else {
-                    // During "awake" hours, randomly toggle to simulate breaks
-                    const shouldBeOnline = Math.random() > 0.15; // 85% online
-                    await sock.sendPresenceUpdate(shouldBeOnline ? 'available' : 'unavailable');
-                }
-            } catch (_) {}
-            scheduleNext(); // Schedule next with NEW random delay
-        }, delay);
+    // Clear previous timer
+    if (activityTimers[instanceId]) {
+        clearTimeout(activityTimers[instanceId]);
     }
-    scheduleNext();
+    
+    // Set new 5-min idle timer → go offline
+    activityTimers[instanceId] = setTimeout(() => {
+        try {
+            const s = sessions[instanceId]?.sock;
+            if (s) {
+                s.sendPresenceUpdate('unavailable');
+                console.log(`[${instanceId}] ⏰ 5 min idle → offline`);
+            }
+        } catch (_) {}
+    }, IDLE_TIMEOUT_MS);
 }
 
-function stopPresenceSchedule(id) {
-    if (presenceTimers[id]) {
-        clearTimeout(presenceTimers[id]);
-        delete presenceTimers[id];
+function clearActivityTimer(id) {
+    if (activityTimers[id]) {
+        clearTimeout(activityTimers[id]);
+        delete activityTimers[id];
     }
 }
 
@@ -246,7 +244,8 @@ const createSession = async (id) => {
             retryCounters[id] = 0;
             // Track first connection for warm-up protocol (new numbers)
             setFirstConnected(id);
-            // Human mode — no simulated presence needed
+            // Human mode: start offline, go online only when human sends a message
+            try { sock.sendPresenceUpdate('unavailable'); } catch (_) {}
         }
     });
 
@@ -606,5 +605,6 @@ module.exports = {
     getSessionState,
     getSessionQr,
     getSocket,
-    formatJid
+    formatJid,
+    markHumanActive
 };
