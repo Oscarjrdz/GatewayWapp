@@ -1,6 +1,6 @@
 const express = require('express');
 const { getInstances, updateInstance, deleteInstance, defaultSettings } = require('./store');
-const { createSession, getSessionState, getSessionQr, getSocket, deleteSession, forceReconnect, markHumanActive } = require('./whatsapp');
+const { createSession, getSessionState, getSessionQr, getSocket, deleteSession, forceReconnect } = require('./whatsapp');
 const { v4: uuidv4 } = require('uuid');
 const { sendSafe, canSendNow, getHealthReport, calculateRiskScore, getMetrics, skipWarmup, getQueue, humanize, humanizeAfter, fingerprintText } = require('./antiban');
 
@@ -186,10 +186,7 @@ const initRoutes = (app) => {
             }
 
             const msg = await sendSafe(req.instanceId, sock, jid, msgContent, { isReply });
-            
-            // Human active: go online + reset 5-min idle timer
-            markHumanActive(req.instanceId);
-            
+
             // Increment Sent
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
@@ -223,9 +220,7 @@ const initRoutes = (app) => {
             }
 
             const msg = await sendSafe(req.instanceId, sock, jid, { image: mediaTypeOptions, caption: caption || '' });
-            
-            markHumanActive(req.instanceId);
-            
+
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
             
@@ -262,9 +257,7 @@ const initRoutes = (app) => {
                 fileName: filename || 'document',
                 mimetype: 'application/octet-stream' 
             });
-            
-            markHumanActive(req.instanceId);
-            
+
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
             
@@ -301,9 +294,7 @@ const initRoutes = (app) => {
                 mimetype: 'audio/mp4',
                 ptt: ptt === true || ptt === 'true' // if true, it renders as a voice note
             });
-            
-            markHumanActive(req.instanceId);
-            
+
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
             
@@ -338,9 +329,7 @@ const initRoutes = (app) => {
             const msg = await sock.sendMessage(jid, { 
                 sticker: mediaTypeOptions
             });
-            
-            markHumanActive(req.instanceId);
-            
+
             const currentSent = req.instance.messages_sent || 0;
             updateInstance(req.instanceId, { messages_sent: currentSent + 1 });
             

@@ -33,43 +33,7 @@ function getBackoffDelay(instanceId) {
     return Math.round(jitter);
 }
 
-// ─── Presence Schedule ───────────────────────────────────────────────────────
-// Simulates natural online/offline patterns to avoid 24/7 bot detection
-// ─── Human Activity Auto-Offline ─────────────────────────────────────────────
-// Goes online when human sends a message, auto-offline after 5 min idle
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-const activityTimers = {};
 
-function markHumanActive(instanceId) {
-    const sock = sessions[instanceId]?.sock;
-    if (!sock) return;
-    
-    // Go online
-    try { sock.sendPresenceUpdate('available'); } catch (_) {}
-    
-    // Clear previous timer
-    if (activityTimers[instanceId]) {
-        clearTimeout(activityTimers[instanceId]);
-    }
-    
-    // Set new 5-min idle timer → go offline
-    activityTimers[instanceId] = setTimeout(() => {
-        try {
-            const s = sessions[instanceId]?.sock;
-            if (s) {
-                s.sendPresenceUpdate('unavailable');
-                console.log(`[${instanceId}] ⏰ 5 min idle → offline`);
-            }
-        } catch (_) {}
-    }, IDLE_TIMEOUT_MS);
-}
-
-function clearActivityTimer(id) {
-    if (activityTimers[id]) {
-        clearTimeout(activityTimers[id]);
-        delete activityTimers[id];
-    }
-}
 
 const logger = pino({ level: 'silent' });
 
@@ -211,8 +175,7 @@ const createSession = async (id) => {
             const reason = lastDisconnect?.error?.output?.statusCode;
             console.log(`[${id}] Connection closed. Reason: ${reason}`);
             
-            // Stop presence simulation
-            stopPresenceSchedule(id);
+
             
             if (sessions[id]) {
                 sessions[id].status = 'disconnected';
@@ -244,8 +207,8 @@ const createSession = async (id) => {
             retryCounters[id] = 0;
             // Track first connection for warm-up protocol (new numbers)
             setFirstConnected(id);
-            // Human mode: start offline, go online only when human sends a message
-            try { sock.sendPresenceUpdate('unavailable'); } catch (_) {}
+            // Go online on connect
+            try { sock.sendPresenceUpdate('available'); } catch (_) {}
         }
     });
 
@@ -533,8 +496,7 @@ const createSession = async (id) => {
 };
 
 const deleteSession = async (id) => {
-    // Clean up presence schedule and retry counters to prevent memory leaks
-    stopPresenceSchedule(id);
+    // Clean up retry counters to prevent memory leaks
     delete retryCounters[id];
     
     if (sessions[id]) {
@@ -562,8 +524,7 @@ const deleteSession = async (id) => {
 const forceReconnect = async (id) => {
     console.log(`[${id}] FORCE RECONNECT: Wiping session to generate fresh QR...`);
     
-    // 1. Stop presence and backoff timers
-    stopPresenceSchedule(id);
+    // 1. Stop backoff timers
     delete retryCounters[id];
     
     // 2. Kill existing socket (without calling logout — we want to keep the instance)
@@ -605,6 +566,5 @@ module.exports = {
     getSessionState,
     getSessionQr,
     getSocket,
-    formatJid,
-    markHumanActive
+    formatJid
 };
