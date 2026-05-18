@@ -24,47 +24,38 @@ const { isManualPresence } = require('./store');
 
 const DEFAULT_CONFIG = {
     // Rate limits — MONITOR ONLY, never block
-    // Set extremely high so they only serve as counters for /antiban/health
-    maxMessagesPerHour: 9999,     // Effectively unlimited — just tracks metrics
-    maxMessagesPerDay: 9999,      // Effectively unlimited — just tracks metrics
-    warningThreshold: 0.95,       // Only warn at 95% (which is ~9500 msgs, basically never)
+    maxMessagesPerHour: 9999,
+    maxMessagesPerDay: 9999,
+    warningThreshold: 0.95,
     
-    // Humanizer delays (milliseconds) — THE CORE PROTECTION
-    typingDelayPerChar: 10,       // ~10ms per character (fast but realistic)
-    typingMinDelay: 400,          // Minimum 400ms of "typing"
-    typingMaxDelay: 1500,         // Maximum 1.5 seconds
+    // Humanizer delays — ALL ZERO (instant sending)
+    typingDelayPerChar: 0,
+    typingMinDelay: 0,
+    typingMaxDelay: 0,
     
-    // Smart delays between messages — keeps it natural without being slow
-    baseDelayMin: 800,            // 0.8 seconds minimum between messages
-    baseDelayMax: 2000,           // 2 seconds maximum between messages
+    // Smart delays — ALL ZERO (instant sending)
+    baseDelayMin: 0,
+    baseDelayMax: 0,
     
-    // Fatigue simulation — fixed pauses
-    burstPauseEvery: 20,          // Every 20 messages...
-    burstPauseMin: 2500,          // ...pause for exactly 2.5 seconds
-    burstPauseMax: 2500,
-    longBreakEvery: 50,           // Every 50 messages...
-    longBreakMin: 5000,           // ...pause for exactly 5 seconds
-    longBreakMax: 5000,
+    // Fatigue simulation — disabled (zero delays)
+    burstPauseEvery: 20,
+    burstPauseMin: 0,
+    burstPauseMax: 0,
+    longBreakEvery: 50,
+    longBreakMin: 0,
+    longBreakMax: 0,
     
-    // Warm-up — progressive limits for new numbers
-    // Based on Whapi recommendation: start low, scale gradually over 3 weeks
-    warmupSchedule: [
-        { days: 1,  maxPerDay: 20 },    // Day 1: max 20 messages
-        { days: 3,  maxPerDay: 50 },    // Days 2-3: max 50
-        { days: 7,  maxPerDay: 100 },   // Days 4-7: max 100
-        { days: 14, maxPerDay: 300 },   // Week 2: max 300
-        { days: 21, maxPerDay: 500 },   // Week 3: max 500
-        // After day 21: unlimited (uses maxMessagesPerDay)
-    ],
+    // Warm-up — disabled (all unlimited from day 1)
+    warmupSchedule: [],
     
     // Queue
     maxQueueSize: 1000,
-    queueProcessIntervalMs: 500,   // Check queue every 500ms
+    queueProcessIntervalMs: 0,
     
     // Priority (lower = higher priority)
-    PRIORITY_REPLY: 1,            // Replies to incoming messages (fastest)
-    PRIORITY_NORMAL: 5,           // Regular outgoing messages
-    PRIORITY_BROADCAST: 10,       // Bulk/broadcast messages
+    PRIORITY_REPLY: 1,
+    PRIORITY_NORMAL: 5,
+    PRIORITY_BROADCAST: 10,
 };
 
 // ─── Instance Metrics Store ──────────────────────────────────────────────────
@@ -197,34 +188,28 @@ function randomDelay(min, max) {
  * 4. Sends "paused" after message is sent
  */
 async function humanize(instanceId, sock, jid, messageText, config = DEFAULT_CONFIG) {
+    // Instant mode — skip all typing simulation
+    if (config.typingMaxDelay === 0) return;
     if (isManualPresence(instanceId)) return;
     try {
-        // Calculate typing duration based on message length
         const textLen = (messageText || '').length;
         let typingDelay = textLen * config.typingDelayPerChar;
         typingDelay = Math.max(config.typingMinDelay, Math.min(config.typingMaxDelay, typingDelay));
-        
-        // Add jitter (±20%)
         const jitter = typingDelay * 0.2;
         typingDelay += randomDelay(-jitter, jitter);
         typingDelay = Math.max(config.typingMinDelay, typingDelay);
-        
-        // 1. Show "typing..."
         await sock.sendPresenceUpdate('composing', jid);
-        
-        // 2. Wait (simulating human typing)
         await new Promise(r => setTimeout(r, typingDelay));
-        
     } catch (err) {
-        // Never let humanizer errors prevent message delivery
         console.error(`[AntiBan] Humanizer error: ${err.message}`);
     }
 }
 
 async function humanizeAfter(instanceId, sock, jid) {
+    // Instant mode — skip post-send delay
+    if (DEFAULT_CONFIG.typingMaxDelay === 0) return;
     if (isManualPresence(instanceId)) return;
     try {
-        // Brief pause before stopping typing indicator
         await new Promise(r => setTimeout(r, randomDelay(200, 500)));
         await sock.sendPresenceUpdate('paused', jid);
     } catch (err) {
@@ -648,13 +633,7 @@ class MessageQueue extends EventEmitter {
                     await humanize(this.instanceId, job.sock, job.jid, textContent, this.config);
                 }
                 
-                // Apply content fingerprinting
-                if (job.content?.text) {
-                    job.content.text = fingerprintText(job.content.text);
-                }
-                if (job.content?.caption) {
-                    job.content.caption = fingerprintText(job.content.caption);
-                }
+                // Fingerprinting disabled — human messages are naturally unique
                 
                 // Send the actual message
                 const msg = await job.sock.sendMessage(job.jid, job.content);

@@ -19,7 +19,6 @@ const userDevicesCache = new NodeCache({ stdTTL: 300, useClones: false });
 // ─── Anti-Loop Protection ────────────────────────────────────────────────────
 // Prevents the bot from processing the same message twice or entering response loops
 const processedMessages = new NodeCache({ stdTTL: 120, checkperiod: 60 }); // 2-min TTL
-const chatCooldowns = new NodeCache({ stdTTL: 2, checkperiod: 5 });         // 2-sec per-chat cooldown
 
 // ─── Reconnection Backoff ────────────────────────────────────────────────────
 const retryCounters = {};  // { instanceId: retryCount }
@@ -247,8 +246,7 @@ const createSession = async (id) => {
             retryCounters[id] = 0;
             // Track first connection for warm-up protocol (new numbers)
             setFirstConnected(id);
-            // Start presence schedule (simulates natural online/offline)
-            startPresenceSchedule(id, sock);
+            // Human mode — no simulated presence needed
         }
     });
 
@@ -284,15 +282,6 @@ const createSession = async (id) => {
                 continue;
             }
             
-            // 3. Per-chat cooldown: if we just processed a msg from this chat <2s ago, skip
-            const chatId = msg.key.remoteJid;
-            if (chatCooldowns.get(chatId)) {
-                // Still process for metrics but don't fire webhook (prevents rapid-fire)
-                recordMessageReceived(id);
-                currentReceived += 1;
-                continue;
-            }
-            chatCooldowns.set(chatId, true);
             // ─────────────────────────────────────────────────────────────────
 
             currentReceived += 1;
