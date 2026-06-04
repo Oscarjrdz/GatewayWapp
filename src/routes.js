@@ -1067,7 +1067,10 @@ const initRoutes = (app) => {
         if (!sock) return res.status(400).json({ error: 'Session not active' });
 
         try {
-            const jid = formatJid(number);
+            let jid = formatJid(number);
+            const [result] = await sock.onWhatsApp(jid);
+            if (!result?.exists) return res.status(400).json({ error: 'El número no existe en WhatsApp' });
+            jid = result.jid;
             await sock.updateBlockStatus(jid, action);
             res.json({ success: true, jid, action });
         } catch (err) {
