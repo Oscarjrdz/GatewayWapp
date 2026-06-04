@@ -1068,9 +1068,10 @@ const initRoutes = (app) => {
 
         try {
             let jid = formatJid(number);
-            const [result] = await sock.onWhatsApp(jid);
-            if (!result?.exists) return res.status(400).json({ error: 'El número no existe en WhatsApp' });
-            jid = result.jid;
+            try {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result?.exists) jid = result.jid;
+            } catch (_) {}
             await sock.updateBlockStatus(jid, action);
             res.json({ success: true, jid, action });
         } catch (err) {
