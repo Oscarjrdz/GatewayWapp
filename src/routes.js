@@ -1079,6 +1079,32 @@ const initRoutes = (app) => {
         }
     });
 
+    // Save / Edit a Contact
+    app.post('/:instanceId/contacts/save', requireAuth, async (req, res) => {
+        const { number, fullName, firstName } = req.body;
+        if (!number || !fullName) {
+            return res.status(400).json({ error: 'number and fullName are required' });
+        }
+
+        const sock = getSocket(req.instanceId);
+        if (!sock) return res.status(400).json({ error: 'Session not active' });
+
+        try {
+            let jid = formatJid(number);
+            try {
+                const [result] = await sock.onWhatsApp(jid);
+                if (result?.exists) jid = result.jid;
+            } catch (_) {}
+            await sock.addOrEditContact(jid, {
+                fullName,
+                ...(firstName ? { firstName } : {})
+            });
+            res.json({ success: true, jid, fullName });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // ─── Reactions ───────────────────────────────────────────────────────────────
 
     // React to a Message with an emoji
