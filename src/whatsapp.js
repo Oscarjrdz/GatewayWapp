@@ -144,17 +144,29 @@ const createSession = async (id) => {
         }
     });
 
-    // Automatically reject incoming voice/video calls to prevent session instability or flags
+    // Automatically reject incoming voice/video calls and reply via chat
     sock.ev.on('call', async (calls) => {
         for (const call of calls) {
             if (call.status === 'offer') {
+                // 1. Rechazar la llamada
                 try {
                     await sock.rejectCall(call.id, call.from);
-                    console.log(`[${id}] Auto-rejected call from ${call.from} to protect session.`);
+                    console.log(`[${id}] Auto-rejected call from ${call.from}`);
                 } catch (err) {
                     console.log(`[${id}] Failed to reject call:`, err);
                 }
-                // Notificar al webhook para que el bot pueda responder por chat
+
+                // 2. Responder por chat directo con Baileys (maneja @lid nativamente)
+                try {
+                    await sock.sendMessage(call.from, {
+                        text: '📵 ¡Hola! Por el momento no recibimos llamadas por esta línea 🙏\n\n💬 Pero con gusto te ayudamos por aquí en el chat, escríbenos lo que necesitas y te atendemos al instante ⚡\n\n¡Gracias por comunicarte con *El Diablito* 😈!'
+                    });
+                    console.log(`[${id}] Sent call auto-reply to ${call.from}`);
+                } catch (err) {
+                    console.log(`[${id}] Failed to send call reply:`, err);
+                }
+
+                // 3. Notificar al webhook (para logs/registro)
                 try {
                     await sendWebhook(id, 'call', {
                         from: call.from,
@@ -162,9 +174,7 @@ const createSession = async (id) => {
                         type: call.isVideo ? 'video' : 'audio',
                         status: call.status
                     });
-                } catch (err) {
-                    console.log(`[${id}] Failed to send call webhook:`, err);
-                }
+                } catch (err) {}
             }
         }
     });
