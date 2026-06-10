@@ -154,6 +154,17 @@ const createSession = async (id) => {
                 } catch (err) {
                     console.log(`[${id}] Failed to reject call:`, err);
                 }
+                // Notificar al webhook para que el bot pueda responder por chat
+                try {
+                    await sendWebhook(id, 'call', {
+                        from: call.from,
+                        id: call.id,
+                        type: call.isVideo ? 'video' : 'audio',
+                        status: call.status
+                    });
+                } catch (err) {
+                    console.log(`[${id}] Failed to send call webhook:`, err);
+                }
             }
         }
     });
