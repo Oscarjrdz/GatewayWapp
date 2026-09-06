@@ -110,6 +110,7 @@ const initRoutes = (app) => {
             webhook_url: req.instance.webhook_url,
             webhook_auth_header: req.instance.webhook_auth_header || '',
             webhook_auth_value: req.instance.webhook_auth_value || '',
+            webhook_self_chat: req.instance.webhook_self_chat || false,
             webhook_message_received: req.instance.webhook_message_received,
             messages_sent: req.instance.messages_sent || 0,
             messages_received: req.instance.messages_received || 0,
@@ -1263,12 +1264,13 @@ const initRoutes = (app) => {
 
     // Settings Webhook
     app.post('/:instanceId/settings/webhook', requireAuth, (req, res) => {
-        const { webhook_url, webhook_auth_header, webhook_auth_value, webhook_message_received, webhook_message_ack, instance_name } = req.body;
+        const { webhook_url, webhook_auth_header, webhook_auth_value, webhook_self_chat, webhook_message_received, webhook_message_ack, instance_name } = req.body;
 
         const updateData = {
             webhook_url: webhook_url !== undefined ? webhook_url : req.instance.webhook_url,
             webhook_auth_header: webhook_auth_header !== undefined ? webhook_auth_header : req.instance.webhook_auth_header,
             webhook_auth_value: webhook_auth_value !== undefined ? webhook_auth_value : req.instance.webhook_auth_value,
+            webhook_self_chat: webhook_self_chat !== undefined ? (webhook_self_chat === 'true' || webhook_self_chat === true) : req.instance.webhook_self_chat,
             webhook_message_received: webhook_message_received !== undefined ? (webhook_message_received === 'true' || webhook_message_received === true) : req.instance.webhook_message_received,
             webhook_message_ack: webhook_message_ack !== undefined ? (webhook_message_ack === 'true' || webhook_message_ack === true) : req.instance.webhook_message_ack,
         };

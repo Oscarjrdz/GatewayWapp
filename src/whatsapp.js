@@ -260,9 +260,17 @@ const createSession = async (id) => {
             }
             processedMessages.set(msgId, true);
             
-            // 2. Skip our own outgoing messages (prevent self-response loops)
+            // 2. Skip our own outgoing messages (prevent self-response loops).
+            //    EXCEPTION: if webhook_self_chat is enabled AND this is a message
+            //    to your OWN number (self-chat), let it flow to the webhook.
+            //    Normal outgoing messages to OTHER contacts stay filtered.
             if (msg.key.fromMe) {
-                continue;
+                const selfBare = sock.user?.id ? sock.user.id.split(':')[0].split('@')[0] : '';
+                const chatBare = (msg.key.remoteJid || '').split('@')[0].split(':')[0];
+                const isSelfChat = selfBare && chatBare && selfBare === chatBare;
+                if (!(isSelfChat && instances[id]?.webhook_self_chat)) {
+                    continue;
+                }
             }
             
             // ─────────────────────────────────────────────────────────────────

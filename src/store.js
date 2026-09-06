@@ -25,6 +25,7 @@ const defaultSettings = {
     webhook_url: '',
     webhook_auth_header: '',   // e.g. "Authorization"
     webhook_auth_value: '',    // e.g. "Bearer xxxxx" (Cursor webhook key)
+    webhook_self_chat: false,  // if true, also emit message_received for self-chat (fromMe to your own number)
     webhook_message_received: false,
     webhook_message_create: false,
     webhook_message_ack: false,
