@@ -91,7 +91,6 @@ const initRoutes = (app) => {
         const instances = getInstances();
         const list = Object.keys(instances).map(id => ({
             instance_id: `instance${id}`,
-            token: instances[id].token,
             status: getSessionState(id),
             webhook_url: instances[id].webhook_url || '',
             webhook_message_received: instances[id].webhook_message_received || false,
