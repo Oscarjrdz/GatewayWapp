@@ -265,10 +265,22 @@ const createSession = async (id) => {
             //    to your OWN number (self-chat), let it flow to the webhook.
             //    Normal outgoing messages to OTHER contacts stay filtered.
             if (msg.key.fromMe) {
-                const selfBare = sock.user?.id ? sock.user.id.split(':')[0].split('@')[0] : '';
-                const chatBare = (msg.key.remoteJid || '').split('@')[0].split(':')[0];
-                const isSelfChat = selfBare && chatBare && selfBare === chatBare;
-                if (!(isSelfChat && instances[id]?.webhook_self_chat)) {
+                // Extract only digits, then compare the last 10 (national number).
+                // This is immune to the MX prefix quirk: 521XXXXXXXXXX (self) vs
+                // 52XXXXXXXXXX (self-chat remoteJid).
+                const digitsOf = (jid) => (jid || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+                const tail10 = (d) => (d.length >= 10 ? d.slice(-10) : d);
+                const selfDigits = digitsOf(sock.user?.id);
+                const chatDigits = digitsOf(msg.key.remoteJid);
+                const isSelfChat = !!selfDigits && !!chatDigits && tail10(selfDigits) === tail10(chatDigits);
+                const selfChatEnabled = !!instances[id]?.webhook_self_chat;
+                const allow = isSelfChat && selfChatEnabled;
+
+                if (selfChatEnabled) {
+                    console.log(`[${id}] fromMe msg | self=${selfDigits} chat=${chatDigits} | isSelfChat=${isSelfChat} enabled=${selfChatEnabled} -> ${allow ? 'FORWARD' : 'SKIP'}`);
+                }
+
+                if (!allow) {
                     continue;
                 }
             }
