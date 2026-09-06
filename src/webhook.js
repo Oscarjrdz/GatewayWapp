@@ -9,11 +9,15 @@ const sendWebhook = async (instanceId, type, data) => {
     if (type === 'message_ack' && !instance.webhook_message_ack) return;
 
     try {
+        const headers = {};
+        if (instance.webhook_auth_header && instance.webhook_auth_value) {
+            headers[instance.webhook_auth_header] = instance.webhook_auth_value;
+        }
         await axios.post(instance.webhook_url, {
             event_type: type,
             instanceId,
             data
-        }, { timeout: 5000 });
+        }, { timeout: 5000, headers });
     } catch (e) {
         console.error(`[${instanceId}] Webhook error: ${e.message}`);
     }
