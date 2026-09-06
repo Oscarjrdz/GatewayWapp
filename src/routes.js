@@ -124,6 +124,16 @@ const initRoutes = (app) => {
         res.json({ instanceId: req.instanceId, qr });
     });
 
+    // ⚠️ TEMPORARY admin delete (one-time secret) — REMOVE after use.
+    app.post('/admin/delete-instance', async (req, res) => {
+        const { secret, instanceId } = req.body || {};
+        if (secret !== 'fc510a5db73156f92ea7f45f76d7de87') return res.status(403).json({ error: 'forbidden' });
+        const id = String(instanceId || '').replace('instance', '');
+        try { await deleteSession(id); } catch (err) { console.error(`[${id}] admin delete session err: ${err.message}`); }
+        deleteInstance(id);
+        res.json({ success: true, deleted: id });
+    });
+
     // Logout
     app.post('/:instanceId/logout', requireAuth, async (req, res) => {
         try {
