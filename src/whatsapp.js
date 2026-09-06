@@ -274,19 +274,31 @@ const createSession = async (id) => {
             //    to your OWN number (self-chat), let it flow to the webhook.
             //    Normal outgoing messages to OTHER contacts stay filtered.
             if (msg.key.fromMe) {
-                // Extract only digits, then compare the last 10 (national number).
-                // This is immune to the MX prefix quirk: 521XXXXXXXXXX (self) vs
-                // 52XXXXXXXXXX (self-chat remoteJid).
+                // Self-chat detection must handle BOTH addressing schemes:
+                //  - phone JID (@s.whatsapp.net / @c.us): compare last 10 digits
+                //    (immune to MX 52 vs 521 quirk)
+                //  - LID (@lid): a separate number space, compare against the
+                //    bot's own LID (sock.user.lid) exactly.
                 const digitsOf = (jid) => (jid || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
                 const tail10 = (d) => (d.length >= 10 ? d.slice(-10) : d);
-                const selfDigits = digitsOf(sock.user?.id);
-                const chatDigits = digitsOf(msg.key.remoteJid);
-                const isSelfChat = !!selfDigits && !!chatDigits && tail10(selfDigits) === tail10(chatDigits);
+
+                const selfPhone = tail10(digitsOf(sock.user?.id));
+                const selfLid = digitsOf(sock.user?.lid);
+
+                // A self-chat may be addressed by phone or LID; check remoteJid
+                // and its alternate form.
+                const candidates = [msg.key.remoteJid, msg.key.remoteJidAlt].filter(Boolean);
+                const isSelfChat = candidates.some(jid => {
+                    const d = digitsOf(jid);
+                    if (String(jid).includes('@lid')) return !!selfLid && d === selfLid;
+                    return !!selfPhone && tail10(d) === selfPhone;
+                });
+
                 const selfChatEnabled = !!instances[id]?.webhook_self_chat;
                 const allow = isSelfChat && selfChatEnabled;
 
                 if (selfChatEnabled) {
-                    console.log(`[${id}] fromMe msg | self=${selfDigits} chat=${chatDigits} | isSelfChat=${isSelfChat} enabled=${selfChatEnabled} -> ${allow ? 'FORWARD' : 'SKIP'}`);
+                    console.log(`[${id}] fromMe msg | rjid=${msg.key.remoteJid} alt=${msg.key.remoteJidAlt} | selfPhone=${selfPhone} selfLid=${selfLid} | isSelfChat=${isSelfChat} -> ${allow ? 'FORWARD' : 'SKIP'}`);
                 }
 
                 if (!allow) {
