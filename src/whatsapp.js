@@ -234,6 +234,15 @@ const createSession = async (id) => {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        // Diagnostic (self-chat-enabled instances only): log EVERY upsert before
+        // the notify filter, to see if API-sent / self-chat messages arrive and
+        // with which type (notify vs append).
+        if (getInstances()[id]?.webhook_self_chat) {
+            try {
+                const dbg = (messages || []).map(m => `${m.key?.fromMe ? 'me' : 'in'}:${m.key?.remoteJid}:${m.key?.id}`).join(' | ');
+                console.log(`[${id}] UPSERT | type=${type} | n=${messages?.length} | ${dbg}`);
+            } catch (_) {}
+        }
         if (type !== 'notify') return;
         
         // AUTO-READ: Mark incoming messages as "seen" (anti-ban: simulates real user behavior)
