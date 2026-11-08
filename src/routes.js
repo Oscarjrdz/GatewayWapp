@@ -101,6 +101,25 @@ const initRoutes = (app) => {
         res.json(list);
     });
 
+    // Admin: resolve an instance's token using the master secret.
+    // Lets the Master Dashboard open any instance (and show its QR) without
+    // typing the per-instance token. Protected by ADMIN_SECRET (defaults to the
+    // same master password already baked into the frontend).
+    app.get('/admin/:instanceId/credentials', (req, res) => {
+        const ADMIN_SECRET = process.env.ADMIN_SECRET || '8116038195';
+        const secret = req.query.secret || req.headers['x-admin-secret'];
+        if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Forbidden' });
+
+        let id = req.params.instanceId;
+        if (id.startsWith('instance')) id = id.replace('instance', '');
+
+        const instances = getInstances();
+        const instance = instances[id];
+        if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+        res.json({ instance_id: `instance${id}`, token: instance.token });
+    });
+
     // Get Status
     app.get('/:instanceId/status', requireAuth, async (req, res) => {
         const status = getSessionState(req.instanceId);
